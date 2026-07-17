@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: vbank-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: vbank
+      POSTGRES_PASSWORD: vbank_password
+      POSTGRES_DB: vbank_users
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - vbank-postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vbank -d vbank_users"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  vbank-postgres-data:
