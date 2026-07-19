@@ -19,3 +19,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+  account:
+    service:
+      url: http://localhost:8082
