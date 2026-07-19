@@ -4,6 +4,7 @@ import com.vbank.account_service.client.UserServiceClient;
 import com.vbank.account_service.dto.request.CreateAccountRequest;
 import com.vbank.account_service.dto.request.TransferRequest;
 import com.vbank.account_service.dto.response.AccountResponse;
+import com.vbank.account_service.dto.response.ActivateAccountResponse;
 import com.vbank.account_service.dto.response.CreateAccountResponse;
 import com.vbank.account_service.dto.response.TransferResponse;
 import com.vbank.account_service.entity.Account;
@@ -19,7 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-//import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -62,6 +62,12 @@ public class AccountService {
         BigDecimal initialBalance = normalizeMoney(
                 request.initialBalance()
         );
+
+        if (initialBalance.compareTo(MAX_BALANCE) > 0) {
+            throw new BalanceLimitExceededException(
+                    "Initial balance exceeds the permitted account balance limit."
+            );
+        }
 
         String accountNumber =
                 accountNumberGenerator.generateUniqueAccountNumber();
@@ -106,14 +112,62 @@ public class AccountService {
                 .toList();
     }
 
+    public ActivateAccountResponse activateAccount(
+            UUID accountId
+    ) {
+        Account account = findAccountForUpdate(accountId);
+
+        if (account.getAccountType() == AccountType.SYSTEM) {
+            throw new InvalidAccountOperationException(
+                    "SYSTEM accounts cannot be activated through the public account endpoint."
+            );
+        }
+
+        /*
+         * The operation is idempotent.
+         *
+         * Calling activate on an already-active account does not
+         * alter reactivatedAt or extend its inactivity period.
+         */
+        if (account.getStatus() == AccountStatus.ACTIVE) {
+            return new ActivateAccountResponse(
+                    account.getAccountId(),
+                    account.getStatus(),
+                    account.getReactivatedAt(),
+                    "Account is already active."
+            );
+        }
+
+        Instant activationTime = clock.instant();
+
+        account.activate(activationTime);
+
+        return new ActivateAccountResponse(
+                account.getAccountId(),
+                account.getStatus(),
+                account.getReactivatedAt(),
+                "Account activated successfully."
+        );
+    }
+
     public TransferResponse transfer(TransferRequest request) {
-        if (request.fromAccountId().equals(request.toAccountId())) {
+        validateTransferIdentifiers(request);
+
+        if (request.fromAccountId().equals(
+                request.toAccountId()
+        )) {
             throw new InvalidAccountOperationException(
                     "The source and destination accounts must be different."
             );
         }
 
         BigDecimal amount = normalizeMoney(request.amount());
+
+        if (amount.signum() <= 0) {
+            throw new InvalidAccountOperationException(
+                    "Transfer amount must be greater than zero."
+            );
+        }
 
         LockedAccounts lockedAccounts = lockAccountsInStableOrder(
                 request.fromAccountId(),
@@ -128,7 +182,8 @@ public class AccountService {
 
         if (fromAccount.getBalance().compareTo(amount) < 0) {
             throw new InsufficientFundsException(
-                    "Account " + fromAccount.getAccountId()
+                    "Account "
+                            + fromAccount.getAccountId()
                             + " has insufficient funds."
             );
         }
@@ -152,6 +207,22 @@ public class AccountService {
         );
     }
 
+    private void validateTransferIdentifiers(
+            TransferRequest request
+    ) {
+        if (request.fromAccountId() == null) {
+            throw new InvalidAccountOperationException(
+                    "Source account ID is required."
+            );
+        }
+
+        if (request.toAccountId() == null) {
+            throw new InvalidAccountOperationException(
+                    "Destination account ID is required."
+            );
+        }
+    }
+
     private LockedAccounts lockAccountsInStableOrder(
             UUID fromAccountId,
             UUID toAccountId
@@ -170,11 +241,19 @@ public class AccountService {
         Account firstAccount = findAccountForUpdate(firstId);
         Account secondAccount = findAccountForUpdate(secondId);
 
-        if (firstAccount.getAccountId().equals(fromAccountId)) {
-            return new LockedAccounts(firstAccount, secondAccount);
+        if (firstAccount.getAccountId().equals(
+                fromAccountId
+        )) {
+            return new LockedAccounts(
+                    firstAccount,
+                    secondAccount
+            );
         }
 
-        return new LockedAccounts(secondAccount, firstAccount);
+        return new LockedAccounts(
+                secondAccount,
+                firstAccount
+        );
     }
 
     private Account findAccount(UUID accountId) {
@@ -185,31 +264,53 @@ public class AccountService {
     }
 
     private Account findAccountForUpdate(UUID accountId) {
-        return accountRepository.findByIdForUpdate(accountId)
+        return accountRepository
+                .findByIdForUpdate(accountId)
                 .orElseThrow(
                         () -> accountNotFound(accountId)
                 );
     }
 
-    private AccountNotFoundException accountNotFound(UUID accountId) {
+    private AccountNotFoundException accountNotFound(
+            UUID accountId
+    ) {
         return new AccountNotFoundException(
-                "Account with ID " + accountId + " not found."
+                "Account with ID "
+                        + accountId
+                        + " not found."
         );
     }
 
     private void validateActive(Account account) {
         if (account.getStatus() != AccountStatus.ACTIVE) {
             throw new InvalidAccountOperationException(
-                    "Account " + account.getAccountId()
+                    "Account "
+                            + account.getAccountId()
                             + " is inactive and cannot participate in a transfer."
             );
         }
     }
 
-    private AccountType parsePublicAccountType(String value) {
-        AccountType accountType = AccountType.valueOf(
-                value.trim().toUpperCase(Locale.ROOT)
-        );
+    private AccountType parsePublicAccountType(
+            String value
+    ) {
+        if (value == null || value.isBlank()) {
+            throw new InvalidAccountOperationException(
+                    "Account type is required."
+            );
+        }
+
+        AccountType accountType;
+
+        try {
+            accountType = AccountType.valueOf(
+                    value.trim().toUpperCase(Locale.ROOT)
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new InvalidAccountOperationException(
+                    "Account type must be SAVINGS or CHECKING."
+            );
+        }
 
         if (accountType == AccountType.SYSTEM) {
             throw new InvalidAccountOperationException(
@@ -221,6 +322,12 @@ public class AccountService {
     }
 
     private BigDecimal normalizeMoney(BigDecimal value) {
+        if (value == null) {
+            throw new InvalidAccountOperationException(
+                    "Monetary value is required."
+            );
+        }
+
         try {
             return value.setScale(2);
         } catch (ArithmeticException exception) {

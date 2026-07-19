@@ -1,6 +1,7 @@
 package com.vbank.account_service.service;
 
 import com.vbank.account_service.entity.AccountStatus;
+import com.vbank.account_service.entity.AccountType;
 import com.vbank.account_service.repository.AccountRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,7 @@ public class AccountInactivityService {
         return accountRepository.markStaleAccountsInactive(
                 AccountStatus.ACTIVE,
                 AccountStatus.INACTIVE,
+                AccountType.SYSTEM,
                 cutoff,
                 now
         );
