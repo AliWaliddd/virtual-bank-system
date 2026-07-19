@@ -35,3 +35,4 @@ account:
   inactivity:
     cron: ${ACCOUNT_INACTIVITY_CRON:0 0 * * * *}
     zone: ${ACCOUNT_INACTIVITY_ZONE:UTC}
+    threshold-hours: ${ACCOUNT_INACTIVITY_THRESHOLD_HOURS:24}
