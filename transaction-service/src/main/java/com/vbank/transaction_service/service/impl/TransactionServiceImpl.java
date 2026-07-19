@@ -5,6 +5,9 @@ import com.vbank.transaction_service.dto.TransferExecutionRequest;
 import com.vbank.transaction_service.dto.TransferInitiationRequest;
 import com.vbank.transaction_service.entity.Transaction;
 import com.vbank.transaction_service.enums.TransactionStatus;
+import com.vbank.transaction_service.exceptions.InvalidTransferException;
+import com.vbank.transaction_service.exceptions.TransactionAlreadyProcessedException;
+import com.vbank.transaction_service.exceptions.TransactionNotFoundException;
 import com.vbank.transaction_service.repository.TransactionRepository;
 import com.vbank.transaction_service.service.TransactionService;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +41,15 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     public TransactionResponse executeTransfer(TransferExecutionRequest request) {
-        throw new UnsupportedOperationException("Not implemented yet");
+        Transaction transaction = transactionRepository.findById(request.getTransactionId())
+                .orElseThrow(() ->
+                        new TransactionNotFoundException(request.getTransactionId()));
+
+        if (transaction.getStatus() != TransactionStatus.INITIATED) {
+            throw new TransactionAlreadyProcessedException();
+        }
+        // integrate with account service
+        return null;
     }
 
     @Override
@@ -50,11 +61,11 @@ public class TransactionServiceImpl implements TransactionService {
                                 accountId
                         );
 
-        if (transactions.size() == 0){
-            throw new IllegalArgumentException(
-                    "No Account with this id"
-            );
-        }
+//        if (transactions.isEmpty()){
+//            throw new IllegalArgumentException(
+//                    "No Account with this id"
+//            );
+//        }
         return transactions.stream()
                 .map(this::mapToResponse)
                 .toList();
@@ -63,7 +74,7 @@ public class TransactionServiceImpl implements TransactionService {
     private void validateTransfer(TransferInitiationRequest request) {
 
         if (request.getFromAccountId().equals(request.getToAccountId())) {
-            throw new IllegalArgumentException(
+            throw new InvalidTransferException(
                     "Sender and receiver accounts cannot be the same."
             );
         }
