@@ -1,5 +1,7 @@
 package com.vbank.transaction_service.service.impl;
 
+import com.vbank.transaction_service.client.AccountClient;
+import com.vbank.transaction_service.dto.Request.TransferRequest;
 import com.vbank.transaction_service.dto.TransactionResponse;
 import com.vbank.transaction_service.dto.TransferExecutionRequest;
 import com.vbank.transaction_service.dto.TransferInitiationRequest;
@@ -12,7 +14,10 @@ import com.vbank.transaction_service.repository.TransactionRepository;
 import com.vbank.transaction_service.service.TransactionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,11 +26,14 @@ import java.util.UUID;
 public class TransactionServiceImpl implements TransactionService {
 
     private final TransactionRepository transactionRepository;
-
+    private final AccountClient accountClient;
     @Override
     public TransactionResponse initiateTransfer(TransferInitiationRequest request) {
 
         validateTransfer(request);
+
+        validateAccountsExist(request.getFromAccountId());
+        validateAccountsExist(request.getToAccountId());
 
         Transaction transaction = Transaction.builder()
                 .fromAccountId(request.getFromAccountId())
@@ -48,18 +56,40 @@ public class TransactionServiceImpl implements TransactionService {
         if (transaction.getStatus() != TransactionStatus.INITIATED) {
             throw new TransactionAlreadyProcessedException();
         }
-        // integrate with account service
-        return null;
+        validateAccountsExist(transaction.getFromAccountId());
+        validateAccountsExist(transaction.getToAccountId());
+        TransferRequest transferRequest = new TransferRequest(
+                transaction.getFromAccountId(),
+                transaction.getToAccountId(),
+                transaction.getAmount()
+        );
+        try {
+            accountClient.transfer(transferRequest);
+            transaction.setStatus(TransactionStatus.SUCCESS);
+        }catch(RuntimeException e){
+            transaction.setStatus(TransactionStatus.FAILED);
+            transaction.setFailureReason(e.getMessage());
+            transaction.setExecutedAt(Instant.now());
+
+            transactionRepository.save(transaction);
+            throw e;
+        }
+
+        transaction.setExecutedAt(Instant.now());
+        Transaction saved = transactionRepository.save(transaction);
+
+        return mapToResponse(saved);
     }
 
     @Override
     public List<TransactionResponse> getTransactions(UUID accountId) {
-
+        validateAccountsExist(accountId);
         List<Transaction> transactions = transactionRepository
                         .findByFromAccountIdOrToAccountIdOrderByCreatedAtDesc(
                                 accountId,
                                 accountId
                         );
+
 
 //        if (transactions.isEmpty()){
 //            throw new IllegalArgumentException(
@@ -71,12 +101,22 @@ public class TransactionServiceImpl implements TransactionService {
                 .toList();
     }
 
+    //helpers
     private void validateTransfer(TransferInitiationRequest request) {
 
         if (request.getFromAccountId().equals(request.getToAccountId())) {
             throw new InvalidTransferException(
                     "Sender and receiver accounts cannot be the same."
             );
+        }
+    }
+    private void validateAccountsExist(UUID Id) {
+        if (Id != null) {
+            try {
+                accountClient.getAccount(Id);
+            } catch (HttpClientErrorException.NotFound ex) {
+                throw new InvalidTransferException("account does not exist.");
+            }
         }
     }
 
