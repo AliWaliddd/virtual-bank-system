@@ -20,6 +20,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  transaction-service:
+        build:
+          context: ../transaction-service
+          dockerfile: Dockerfile
+
+        container_name: transaction-service
+
+        ports:
+          - "8083:8083"
+
+        depends_on:
+          postgres:
+            condition: service_healthy
 
 volumes:
   vbank-postgres-data:
