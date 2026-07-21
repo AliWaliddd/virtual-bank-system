@@ -33,6 +33,31 @@ services:
         depends_on:
           postgres:
             condition: service_healthy
+  user-service:
+    build:
+      context: ../user-service
+      dockerfile: Dockerfile
 
+    container_name: user-service
+
+    ports:
+      - "8081:8081"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+  account-service:
+      build:
+        context: ../account-service
+        dockerfile: Dockerfile
+
+      container_name: account-service
+
+      ports:
+        - "8082:8082"
+
+      depends_on:
+        postgres:
+          condition: service_healthy
 volumes:
   vbank-postgres-data:

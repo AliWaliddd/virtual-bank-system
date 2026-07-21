@@ -10,7 +10,7 @@ spring:
       fail-on-unknown-properties: true
 
   datasource:
-    url: ${ACCOUNT_DB_URL:jdbc:postgresql://localhost:5432/vbank_accounts}
+    url: ${ACCOUNT_DB_URL:jdbc:postgresql://postgres:5432/vbank_accounts}
     username: ${ACCOUNT_DB_USERNAME:vbank}
     password: ${ACCOUNT_DB_PASSWORD:vbank_password}
     driver-class-name: org.postgresql.Driver
@@ -28,7 +28,7 @@ spring:
 
 services:
   user:
-    base-url: ${USER_SERVICE_BASE_URL:http://localhost:8081}
+    base-url: ${USER_SERVICE_BASE_URL:http://user-service:8081}
     internal-authorization: ${USER_SERVICE_INTERNAL_AUTHORIZATION:Bearer account-service-internal}
 
 account:

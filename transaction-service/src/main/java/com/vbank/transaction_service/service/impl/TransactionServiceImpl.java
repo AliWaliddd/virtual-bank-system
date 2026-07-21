@@ -89,13 +89,6 @@ public class TransactionServiceImpl implements TransactionService {
                                 accountId,
                                 accountId
                         );
-
-
-//        if (transactions.isEmpty()){
-//            throw new IllegalArgumentException(
-//                    "No Account with this id"
-//            );
-//        }
         return transactions.stream()
                 .map(this::mapToResponse)
                 .toList();

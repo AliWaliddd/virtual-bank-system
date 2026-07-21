@@ -21,4 +21,4 @@ spring:
         format_sql: true
 account:
     service:
-      url: http://localhost:8082
+      url: http://account-service:8082

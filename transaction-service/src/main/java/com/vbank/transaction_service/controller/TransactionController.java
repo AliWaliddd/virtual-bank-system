@@ -1,6 +1,7 @@
 package com.vbank.transaction_service.controller;
 
 import com.vbank.transaction_service.dto.TransactionResponse;
+import com.vbank.transaction_service.dto.TransferExecutionRequest;
 import com.vbank.transaction_service.dto.TransferInitiationRequest;
 import com.vbank.transaction_service.service.TransactionService;
 import jakarta.validation.Valid;
@@ -13,18 +14,30 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/transactions")
+//@RequestMapping("/transactions")
 @RequiredArgsConstructor
 public class TransactionController {
 
     private final TransactionService transactionService;
 
-    @PostMapping("/transfer/initiation")
+    @PostMapping("/transactions/transfer/initiation")
     public ResponseEntity<TransactionResponse> initiateTransfer(
             @Valid @RequestBody TransferInitiationRequest request) {
 
         TransactionResponse response =
                 transactionService.initiateTransfer(request);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(response);
+    }
+
+    @PostMapping("/transactions/transfer/execution")
+    public ResponseEntity<TransactionResponse> executeTransfer(
+            @Valid @RequestBody TransferExecutionRequest request) {
+
+        TransactionResponse response =
+                transactionService.executeTransfer(request);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
