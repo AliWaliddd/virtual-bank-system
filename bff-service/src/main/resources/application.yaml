@@ -1,0 +1,26 @@
+server:
+  port: ${BFF_SERVICE_PORT:8084}
+
+spring:
+  application:
+    name: bff-service
+
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: false
+
+services:
+  user:
+    base-url: ${USER_SERVICE_BASE_URL:http://localhost:8081}
+  account:
+    base-url: ${ACCOUNT_SERVICE_BASE_URL:http://localhost:8082}
+  transaction:
+    base-url: ${TRANSACTION_SERVICE_BASE_URL:http://localhost:8083}
+
+bff:
+  downstream:
+    connect-timeout: ${BFF_CONNECT_TIMEOUT:2s}
+    response-timeout: ${BFF_RESPONSE_TIMEOUT:3s}
+    request-timeout: ${BFF_REQUEST_TIMEOUT:4s}
+    transaction-concurrency: ${BFF_TRANSACTION_CONCURRENCY:8}
+    max-in-memory-size: ${BFF_MAX_IN_MEMORY_SIZE:1048576}

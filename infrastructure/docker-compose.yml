@@ -59,5 +59,30 @@ services:
       depends_on:
         postgres:
           condition: service_healthy
+
+  bff-service:
+    build:
+      context: ../bff-service
+      dockerfile: Dockerfile
+    container_name: bff-service
+    environment:
+      BFF_SERVICE_PORT: 8084
+      USER_SERVICE_BASE_URL: http://user-service:8081
+      ACCOUNT_SERVICE_BASE_URL: http://account-service:8082
+      TRANSACTION_SERVICE_BASE_URL: http://transaction-service:8083
+      BFF_CONNECT_TIMEOUT: ${BFF_CONNECT_TIMEOUT:-2s}
+      BFF_RESPONSE_TIMEOUT: ${BFF_RESPONSE_TIMEOUT:-3s}
+      BFF_REQUEST_TIMEOUT: ${BFF_REQUEST_TIMEOUT:-4s}
+      BFF_TRANSACTION_CONCURRENCY: ${BFF_TRANSACTION_CONCURRENCY:-8}
+    ports:
+      - "8084:8084"
+    depends_on:
+      user-service:
+        condition: service_started
+      account-service:
+        condition: service_started
+      transaction-service:
+        condition: service_started
+
 volumes:
   vbank-postgres-data:
