@@ -10,6 +10,7 @@ import com.vbank.transaction_service.enums.TransactionStatus;
 import com.vbank.transaction_service.exceptions.InvalidTransferException;
 import com.vbank.transaction_service.exceptions.TransactionAlreadyProcessedException;
 import com.vbank.transaction_service.exceptions.TransactionNotFoundException;
+import com.vbank.transaction_service.exceptions.TransferFailedException;
 import com.vbank.transaction_service.repository.TransactionRepository;
 import com.vbank.transaction_service.service.TransactionService;
 import lombok.RequiredArgsConstructor;
@@ -72,8 +73,8 @@ public class TransactionServiceImpl implements TransactionService {
             transaction.setExecutedAt(Instant.now());
 
             transactionRepository.save(transaction);
-            throw e;
-        }
+            throw new TransferFailedException(e.getMessage());
+                }
 
         transaction.setExecutedAt(Instant.now());
         Transaction saved = transactionRepository.save(transaction);
