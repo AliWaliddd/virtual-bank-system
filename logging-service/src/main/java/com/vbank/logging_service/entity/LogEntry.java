@@ -24,6 +24,7 @@ public class LogEntry {
     private String message;
 
     @Column(nullable = false)
+    @Enumerated(EnumType.STRING)
     private MessageType messageType;
 
     @Column(nullable = false)
