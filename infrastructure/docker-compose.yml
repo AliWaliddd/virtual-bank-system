@@ -95,6 +95,10 @@ services:
       depends_on:
         postgres:
           condition: service_healthy
+        kafka:
+          condition: service_started
+      environment:
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
   bff-service:
     build:

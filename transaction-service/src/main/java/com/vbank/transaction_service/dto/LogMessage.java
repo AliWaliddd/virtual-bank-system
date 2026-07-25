@@ -2,10 +2,15 @@ package com.vbank.transaction_service.dto;
 
 
 
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import lombok.*;
 
 import java.time.Instant;
 import java.util.UUID;
+
+
+
 
 @Getter
 @Setter
@@ -17,7 +22,7 @@ public class LogMessage {
 
 
     private String message;
-
+    @Enumerated(EnumType.STRING)
     private MessageType messageType;
 
     private Instant dateTime;

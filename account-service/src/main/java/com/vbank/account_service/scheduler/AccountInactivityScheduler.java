@@ -1,8 +1,11 @@
 package com.vbank.account_service.scheduler;
 
+import com.vbank.account_service.dto.LogMessage;
+import com.vbank.account_service.dto.MessageType;
 import com.vbank.account_service.entity.AccountStatus;
 import com.vbank.account_service.entity.AccountType;
 import com.vbank.account_service.repository.AccountRepository;
+import com.vbank.account_service.service.LoggingProducerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,11 +27,13 @@ public class AccountInactivityScheduler {
 
     private final AccountRepository accountRepository;
     private final Clock clock;
+    private final LoggingProducerService loggingProducerService;
     private final Duration inactivityThreshold;
 
     public AccountInactivityScheduler(
             AccountRepository accountRepository,
             Clock clock,
+            LoggingProducerService loggingProducerService,
             @Value(
                     "${account.inactivity.threshold-hours:24}"
             )
@@ -42,6 +47,7 @@ public class AccountInactivityScheduler {
 
         this.accountRepository = accountRepository;
         this.clock = clock;
+        this.loggingProducerService = loggingProducerService;
         this.inactivityThreshold =
                 Duration.ofHours(inactivityThresholdHours);
     }
@@ -72,6 +78,23 @@ public class AccountInactivityScheduler {
                         + "Accounts marked inactive: {}",
                 cutoff,
                 inactiveAccountCount
+        );
+
+        loggingProducerService.send(
+                LogMessage.builder()
+                        .message(
+                                "Account inactivity job completed. Accounts marked inactive: "
+                                        + inactiveAccountCount
+                                        + "."
+                        )
+                        .messageType(MessageType.REQUEST)
+                        .dateTime(currentTime)
+                        .serviceName("account-service")
+                        .httpMethod("SCHEDULED")
+                        .path("/accounts/inactivity")
+                        .statusCode(200)
+                        .appName("Virtual Bank")
+                        .build()
         );
     }
 }

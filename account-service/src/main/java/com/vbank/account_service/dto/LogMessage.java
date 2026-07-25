@@ -1,12 +1,13 @@
-package com.vbank.logging_service.dto;
+package com.vbank.account_service.dto;
 
 
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import lombok.*;
 
 import java.time.Instant;
 import java.util.UUID;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+
 
 @Getter
 @Setter
