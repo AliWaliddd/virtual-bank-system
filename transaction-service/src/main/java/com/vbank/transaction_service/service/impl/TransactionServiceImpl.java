@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
+import com.vbank.transaction_service.exceptions.AccountTransferRejectedException;
 
 import java.time.Instant;
 import java.util.List;
@@ -49,37 +50,75 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
-    public TransactionResponse executeTransfer(TransferExecutionRequest request) {
-        Transaction transaction = transactionRepository.findById(request.getTransactionId())
+    public TransactionResponse executeTransfer(
+            TransferExecutionRequest request
+    ) {
+        Transaction transaction = transactionRepository
+                .findById(request.getTransactionId())
                 .orElseThrow(() ->
-                        new TransactionNotFoundException(request.getTransactionId()));
+                        new TransactionNotFoundException(
+                                request.getTransactionId()
+                        )
+                );
 
-        if (transaction.getStatus() != TransactionStatus.INITIATED) {
+        if (transaction.getStatus()
+                != TransactionStatus.INITIATED) {
+
             throw new TransactionAlreadyProcessedException();
         }
-        validateAccountsExist(transaction.getFromAccountId());
-        validateAccountsExist(transaction.getToAccountId());
+
+        validateAccountsExist(
+                transaction.getFromAccountId()
+        );
+
+        validateAccountsExist(
+                transaction.getToAccountId()
+        );
+
         TransferRequest transferRequest = new TransferRequest(
                 transaction.getFromAccountId(),
                 transaction.getToAccountId(),
                 transaction.getAmount()
         );
+
         try {
             accountClient.transfer(transferRequest);
-            transaction.setStatus(TransactionStatus.SUCCESS);
-        }catch(RuntimeException e){
-            transaction.setStatus(TransactionStatus.FAILED);
-            transaction.setFailureReason(e.getMessage());
+
+            transaction.setStatus(
+                    TransactionStatus.SUCCESS
+            );
+
+            transaction.setFailureReason(null);
             transaction.setExecutedAt(Instant.now());
 
+            Transaction savedTransaction =
+                    transactionRepository.save(transaction);
+
+            return mapToResponse(savedTransaction);
+
+        } catch (AccountTransferRejectedException exception) {
+            /*
+             * Account Service successfully received and evaluated the
+             * request, but rejected it for a banking/business reason.
+             *
+             * The transaction has definitively failed.
+             */
+            transaction.setStatus(
+                    TransactionStatus.FAILED
+            );
+
+            transaction.setFailureReason(
+                    exception.getMessage()
+            );
+
+            transaction.setExecutedAt(
+                    Instant.now()
+            );
+
             transactionRepository.save(transaction);
-            throw new TransferFailedException(e.getMessage());
-                }
 
-        transaction.setExecutedAt(Instant.now());
-        Transaction saved = transactionRepository.save(transaction);
-
-        return mapToResponse(saved);
+            throw exception;
+        }
     }
 
     @Override

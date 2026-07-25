@@ -39,9 +39,7 @@ public class TransactionController {
         TransactionResponse response =
                 transactionService.executeTransfer(request);
 
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(response);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/accounts/{accountId}/transactions")
