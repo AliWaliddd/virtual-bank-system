@@ -1,5 +1,7 @@
 package com.vbank.account_service.service;
 
+import com.vbank.account_service.dto.LogMessage;
+import com.vbank.account_service.dto.MessageType;
 import com.vbank.account_service.entity.AccountStatus;
 import com.vbank.account_service.entity.AccountType;
 import com.vbank.account_service.repository.AccountRepository;
@@ -18,13 +20,16 @@ public class AccountInactivityService {
 
     private final AccountRepository accountRepository;
     private final Clock clock;
+    private final LoggingProducerService loggingProducerService;
 
     public AccountInactivityService(
             AccountRepository accountRepository,
-            Clock clock
+            Clock clock,
+            LoggingProducerService loggingProducerService
     ) {
         this.accountRepository = accountRepository;
         this.clock = clock;
+        this.loggingProducerService = loggingProducerService;
     }
 
     @Transactional
@@ -32,12 +37,31 @@ public class AccountInactivityService {
         Instant now = clock.instant();
         Instant cutoff = now.minus(INACTIVITY_PERIOD);
 
-        return accountRepository.markStaleAccountsInactive(
+        int inactiveAccountCount = accountRepository.markStaleAccountsInactive(
                 AccountStatus.ACTIVE,
                 AccountStatus.INACTIVE,
                 AccountType.SYSTEM,
                 cutoff,
                 now
         );
+
+        loggingProducerService.send(
+                LogMessage.builder()
+                        .message(
+                                "Account inactivity operation completed. Accounts marked inactive: "
+                                        + inactiveAccountCount
+                                        + "."
+                        )
+                        .messageType(MessageType.REQUEST)
+                        .dateTime(now)
+                        .serviceName("account-service")
+                        .httpMethod("SCHEDULED")
+                        .path("/accounts/inactivity")
+                        .statusCode(200)
+                        .appName("Virtual Bank")
+                        .build()
+        );
+
+        return inactiveAccountCount;
     }
 }

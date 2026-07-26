@@ -2,6 +2,8 @@ server:
   port: 8081
 
 spring:
+  kafka:
+      bootstrap-servers: kafka:9092
   application:
     name: user-service
 

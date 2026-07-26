@@ -1,6 +1,7 @@
 package com.vbank.transaction_service.service.impl;
 
 import com.vbank.transaction_service.client.AccountClient;
+import com.vbank.transaction_service.dto.*;
 import com.vbank.transaction_service.dto.Request.TransferRequest;
 import com.vbank.transaction_service.dto.TransactionResponse;
 import com.vbank.transaction_service.dto.TransferExecutionRequest;
@@ -29,6 +30,8 @@ public class TransactionServiceImpl implements TransactionService {
 
     private final TransactionRepository transactionRepository;
     private final AccountClient accountClient;
+    private final LoggingProducerService loggingProducerService;
+
     @Override
     public TransactionResponse initiateTransfer(TransferInitiationRequest request) {
 
@@ -45,7 +48,19 @@ public class TransactionServiceImpl implements TransactionService {
                 .build();
 
         Transaction savedTransaction = transactionRepository.save(transaction);
-
+        loggingProducerService.send(
+                LogMessage.builder()
+                        .message("Transaction initiated successfully.")
+                        .messageType(MessageType.REQUEST)
+                        .dateTime(Instant.now())
+                        .serviceName("transaction-service")
+                        .httpMethod("POST")
+                        .path("/transactions/transfer/initiation")
+                        .statusCode(200)
+                        .correlationId(savedTransaction.getId())
+                        .appName("Virtual Bank")
+                        .build()
+        );
         return mapToResponse(savedTransaction);
     }
 
@@ -91,34 +106,39 @@ public class TransactionServiceImpl implements TransactionService {
             transaction.setFailureReason(null);
             transaction.setExecutedAt(Instant.now());
 
-            Transaction savedTransaction =
-                    transactionRepository.save(transaction);
-
-            return mapToResponse(savedTransaction);
-
-        } catch (AccountTransferRejectedException exception) {
-            /*
-             * Account Service successfully received and evaluated the
-             * request, but rejected it for a banking/business reason.
-             *
-             * The transaction has definitively failed.
-             */
-            transaction.setStatus(
-                    TransactionStatus.FAILED
+            Transaction savedTransaction=transactionRepository.save(transaction);
+            loggingProducerService.send(
+                    LogMessage.builder()
+                            .message(e.getMessage())
+                            .messageType(MessageType.REQUEST)
+                            .dateTime(Instant.now())
+                            .serviceName("transaction-service")
+                            .httpMethod("POST")
+                            .path("/transactions/transfer/execution")
+                            .statusCode(500)
+                            .correlationId(savedTransaction.getId())
+                            .appName("Virtual Bank")
+                            .build()
             );
+            throw new TransferFailedException(e.getMessage());
+                }
 
-            transaction.setFailureReason(
-                    exception.getMessage()
-            );
-
-            transaction.setExecutedAt(
-                    Instant.now()
-            );
-
-            transactionRepository.save(transaction);
-
-            throw exception;
-        }
+        transaction.setExecutedAt(Instant.now());
+        Transaction saved = transactionRepository.save(transaction);
+        loggingProducerService.send(
+                LogMessage.builder()
+                        .message("Transaction Executed successfully.")
+                        .messageType(MessageType.REQUEST)
+                        .dateTime(Instant.now())
+                        .serviceName("transaction-service")
+                        .httpMethod("POST")
+                        .path("/transactions/transfer/execution")
+                        .statusCode(200)
+                        .correlationId(saved.getId())
+                        .appName("Virtual Bank")
+                        .build()
+        );
+        return mapToResponse(saved);
     }
 
     @Override
