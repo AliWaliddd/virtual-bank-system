@@ -1,0 +1,62 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse"
+          name="InjectVBankAppName">
+
+    <!-- Never trust an APP-NAME supplied directly by the client. -->
+    <property
+            action="remove"
+            name="APP-NAME"
+            scope="transport"
+    />
+
+    <!-- Resolve the application authenticated by WSO2. -->
+    <switch source="get-property('api.ut.application.name')">
+
+        <case regex="(?i)^vbank portal$">
+            <property
+                    action="set"
+                    name="APP-NAME"
+                    value="PORTAL"
+                    scope="transport"
+            />
+        </case>
+
+        <case regex="(?i)^vbank mobile$">
+            <property
+                    action="set"
+                    name="APP-NAME"
+                    value="MOBILE"
+                    scope="transport"
+            />
+        </case>
+
+        <!-- Reject tokens or keys belonging to any other application. -->
+        <default>
+            <property
+                    name="HTTP_SC"
+                    value="403"
+                    scope="axis2"
+            />
+
+            <property
+                    name="messageType"
+                    value="application/json"
+                    scope="axis2"
+            />
+
+            <payloadFactory media-type="json">
+                <format>
+                    {
+                    "status": 403,
+                    "error": "Forbidden",
+                    "message": "Unsupported gateway application."
+                    }
+                </format>
+                <args/>
+            </payloadFactory>
+
+            <respond/>
+        </default>
+
+    </switch>
+
+</sequence>

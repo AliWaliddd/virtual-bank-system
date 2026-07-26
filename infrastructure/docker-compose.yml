@@ -21,6 +21,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  wso2-apim:
+    image: wso2/wso2am:4.7.0
+    container_name: vbank-wso2-apim
+    restart: unless-stopped
+
+    ports:
+      # Publisher, Developer Portal, Admin Portal, OAuth token endpoint
+      - "9443:9443"
+
+      # HTTPS API Gateway
+      - "8243:8243"
+
+      # HTTP API Gateway
+      - "8280:8280"
+
+    volumes:
+      # Persist WSO2's local development database
+      - vbank-wso2-database:/home/wso2carbon/wso2am-4.7.0/repository/database
+
+      # Persist WSO2 logs
+      - vbank-wso2-logs:/home/wso2carbon/wso2am-4.7.0/repository/logs
+
   kafka:
     image: apache/kafka:4.0.0
     container_name: kafka
@@ -153,3 +176,5 @@ services:
 
 volumes:
   vbank-postgres-data:
+  vbank-wso2-database:
+  vbank-wso2-logs:

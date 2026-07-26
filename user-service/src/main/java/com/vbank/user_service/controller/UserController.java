@@ -13,12 +13,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/users")
 public class UserController {
+
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(UserController.class);
 
     private final UserService userService;
 
@@ -46,8 +51,17 @@ public class UserController {
             consumes = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<LoginResponse> login(
-            @Valid @RequestBody LoginRequest request
+            @Valid @RequestBody LoginRequest request,
+            @RequestHeader(
+                    value = "APP-NAME",
+                    required = false
+            ) String appName
     ) {
+        LOGGER.info(
+                "Login request received with APP-NAME={}",
+                appName
+        );
+
         LoginResponse response =
                 userService.login(request);
 
