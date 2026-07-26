@@ -7,6 +7,10 @@ spring:
   application:
     name: transaction-service
 
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
   datasource:
     url: jdbc:postgresql://postgres:5432/vbank_transactions
     username: vbank
