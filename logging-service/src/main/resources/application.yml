@@ -1,0 +1,33 @@
+server:
+  port: 8085
+debug: true
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/vbank_logs
+    username: vbank
+    password: vbank_password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  kafka:
+    bootstrap-servers: kafka:9092
+
+    consumer:
+      group-id: logging-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "com.vbank.logging_service.dto"
+        spring.json.value.default.type: com.vbank.logging_service.dto.LogMessage
+        spring.json.use.type.headers: false
+
+app:
+  kafka:
+    log-topic: vbank.logs

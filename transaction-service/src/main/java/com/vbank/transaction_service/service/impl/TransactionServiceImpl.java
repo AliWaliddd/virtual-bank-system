@@ -17,8 +17,6 @@ import com.vbank.transaction_service.service.TransactionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestClientException;
-import com.vbank.transaction_service.exceptions.AccountTransferRejectedException;
 
 import java.time.Instant;
 import java.util.List;
@@ -95,7 +93,7 @@ public class TransactionServiceImpl implements TransactionService {
                 transaction.getToAccountId(),
                 transaction.getAmount()
         );
-
+        Transaction savedTransaction;
         try {
             accountClient.transfer(transferRequest);
 
@@ -106,39 +104,49 @@ public class TransactionServiceImpl implements TransactionService {
             transaction.setFailureReason(null);
             transaction.setExecutedAt(Instant.now());
 
-            Transaction savedTransaction=transactionRepository.save(transaction);
+            savedTransaction = transactionRepository.save(transaction);
             loggingProducerService.send(
                     LogMessage.builder()
-                            .message(e.getMessage())
+                            .message("Transaction Executed successfully.")
                             .messageType(MessageType.REQUEST)
                             .dateTime(Instant.now())
                             .serviceName("transaction-service")
                             .httpMethod("POST")
                             .path("/transactions/transfer/execution")
-                            .statusCode(500)
+                            .statusCode(200)
                             .correlationId(savedTransaction.getId())
                             .appName("Virtual Bank")
                             .build()
             );
-            throw new TransferFailedException(e.getMessage());
-                }
+        } catch (RuntimeException e) {
+            transaction.setExecutedAt(Instant.now());
+            transaction.setStatus(
+                    TransactionStatus.FAILED
+            );
+            transaction.setFailureReason(
+                    e.getMessage()
+            );
+            savedTransaction = transactionRepository.save(transaction);
+            loggingProducerService.send(
+                    LogMessage.builder()
+                            .message("Transaction Executed failed.")
+                            .messageType(MessageType.REQUEST)
+                            .dateTime(Instant.now())
+                            .serviceName("transaction-service")
+                            .httpMethod("POST")
+                            .path("/transactions/transfer/execution")
+                            .statusCode(400)
+                            .correlationId(savedTransaction.getId())
+                            .appName("Virtual Bank")
+                            .build()
+            );
+            throw new TransferFailedException(
+                    "Transfer failed: " + e.getMessage()
+            );
+        }
 
-        transaction.setExecutedAt(Instant.now());
-        Transaction saved = transactionRepository.save(transaction);
-        loggingProducerService.send(
-                LogMessage.builder()
-                        .message("Transaction Executed successfully.")
-                        .messageType(MessageType.REQUEST)
-                        .dateTime(Instant.now())
-                        .serviceName("transaction-service")
-                        .httpMethod("POST")
-                        .path("/transactions/transfer/execution")
-                        .statusCode(200)
-                        .correlationId(saved.getId())
-                        .appName("Virtual Bank")
-                        .build()
-        );
-        return mapToResponse(saved);
+
+        return mapToResponse(savedTransaction);
     }
 
     @Override
