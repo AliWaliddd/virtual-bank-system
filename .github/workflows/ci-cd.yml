@@ -49,6 +49,7 @@ jobs:
           ./mvnw clean package -DskipTests
 
       - name: Start Docker Compose
+        working-directory: ./infrastructure
         run: docker compose up -d
 
       - name: Wait for Services
@@ -59,4 +60,5 @@ jobs:
 
       - name: Stop Docker Compose
         if: always()
+        working-directory: ./infrastructure
         run: docker compose down
