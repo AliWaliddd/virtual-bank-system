@@ -48,6 +48,12 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
+      - name: Build bff Service
+        working-directory: ./bff-service
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
+
       - name: Start Docker Compose
         working-directory: ./infrastructure
         run: docker compose up -d
