@@ -3,6 +3,8 @@ package com.vbank.bff_service.service;
 import com.vbank.bff_service.client.AccountServiceClient;
 import com.vbank.bff_service.client.TransactionServiceClient;
 import com.vbank.bff_service.client.UserServiceClient;
+import com.vbank.bff_service.dto.LogMessage;
+import com.vbank.bff_service.dto.MessageType;
 import com.vbank.bff_service.dto.downstream.AccountDownstreamResponse;
 import com.vbank.bff_service.dto.downstream.TransactionDownstreamResponse;
 import com.vbank.bff_service.dto.downstream.UserProfileDownstreamResponse;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,11 +28,13 @@ public class DashboardService {
     private final AccountServiceClient accountServiceClient;
     private final TransactionServiceClient transactionServiceClient;
     private final int transactionConcurrency;
+    private final LoggingProducerService loggingProducerService;
 
     public DashboardService(
             UserServiceClient userServiceClient,
             AccountServiceClient accountServiceClient,
             TransactionServiceClient transactionServiceClient,
+            LoggingProducerService loggingProducerService,
             @Value("${bff.downstream.transaction-concurrency:8}")
             int transactionConcurrency
     ) {
@@ -43,6 +48,7 @@ public class DashboardService {
         this.accountServiceClient = accountServiceClient;
         this.transactionServiceClient = transactionServiceClient;
         this.transactionConcurrency = transactionConcurrency;
+        this.loggingProducerService = loggingProducerService;
     }
 
     public Mono<DashboardResponse> getDashboard(
@@ -68,7 +74,39 @@ public class DashboardService {
                 ).map(accounts -> toDashboardResponse(
                         tuple.getT1(),
                         accounts
-                )));
+                )))
+                .doOnSuccess( response-> {
+                            loggingProducerService.send(
+                                    LogMessage.builder()
+                                            .message("Dashboard data retrieved successfully.")
+                                            .messageType(MessageType.RESPONSE)
+                                            .dateTime(Instant.now())
+                                            .serviceName("BFF-service")
+                                            .httpMethod("GET")
+                                            .path("/bff/dashboard/{userId}")
+                                            .statusCode(200)
+                                            .correlationId(UUID.fromString(requestContext.correlationId()))
+                                            .appName(requestContext.appName())
+                                            .build()
+                            );
+                        }
+                ).doOnError(error -> {
+                    loggingProducerService.send(
+                            LogMessage.builder()
+                                    .message("Failed to retrieve dashboard data")
+                                    .messageType(MessageType.RESPONSE)
+                                    .dateTime(Instant.now())
+                                    .serviceName("BFF-service")
+                                    .httpMethod("GET")
+                                    .path("/bff/dashboard/{userId}")
+                                    .statusCode(400)
+                                    .correlationId(UUID.fromString(requestContext.correlationId()))
+                                    .appName(requestContext.appName())
+                                    .build()
+                    );
+                })
+
+                ;
     }
 
     private Mono<List<DashboardAccountResponse>> enrichAccounts(
