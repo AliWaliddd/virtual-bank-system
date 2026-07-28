@@ -8,6 +8,7 @@ import com.vbank.transaction_service.exceptions.AccountServiceBadGatewayExceptio
 import com.vbank.transaction_service.exceptions.AccountServiceUnavailableException;
 import com.vbank.transaction_service.exceptions.AccountTransferConflictException;
 import com.vbank.transaction_service.exceptions.AccountTransferRejectedException;
+import com.vbank.transaction_service.model.RequestContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -23,29 +24,68 @@ import java.util.UUID;
 public class AccountClient {
 
     private final RestClient restClient;
+    private final String accountServiceUrl;
 
-    @Value("${account.service.url}")
-    private String accountServiceUrl;
-
-    public AccountClient(RestClient restClient) {
+    public AccountClient(
+            RestClient restClient,
+            @Value("${account.service.url}")
+            String accountServiceUrl
+    ) {
         this.restClient = restClient;
+        this.accountServiceUrl = accountServiceUrl;
     }
 
-    public AccountResponse getAccount(UUID accountId) {
-        return restClient.get()
-                .uri(
-                        accountServiceUrl
-                                + "/accounts/{accountId}",
-                        accountId
-                )
-                .retrieve()
-                .body(AccountResponse.class);
+    public AccountResponse getAccount(
+            UUID accountId,
+            RequestContext requestContext
+    ) {
+        try {
+            AccountResponse response = restClient.get()
+                    .uri(
+                            accountServiceUrl
+                                    + "/accounts/{accountId}",
+                            accountId
+                    )
+                    .headers(requestContext::applyTo)
+                    .retrieve()
+                    .body(AccountResponse.class);
+
+            if (response == null) {
+                throw new AccountServiceBadGatewayException(
+                        "Account Service returned an empty account response."
+                );
+            }
+
+            return response;
+        } catch (HttpClientErrorException.NotFound exception) {
+            throw exception;
+        } catch (HttpClientErrorException exception) {
+            throw new AccountServiceBadGatewayException(
+                    "Account Service rejected the internal account lookup unexpectedly."
+            );
+        } catch (HttpServerErrorException exception) {
+            throw new AccountServiceBadGatewayException(
+                    "Account Service failed while retrieving the account."
+            );
+        } catch (ResourceAccessException exception) {
+            throw new AccountServiceUnavailableException(
+                    "Account Service is currently unavailable."
+            );
+        } catch (RestClientException exception) {
+            throw new AccountServiceBadGatewayException(
+                    "An invalid account response was received from Account Service."
+            );
+        }
     }
 
-    public TransferResponse transfer(TransferRequest request) {
+    public TransferResponse transfer(
+            TransferRequest request,
+            RequestContext requestContext
+    ) {
         try {
             TransferResponse response = restClient.put()
                     .uri(accountServiceUrl + "/accounts/transfer")
+                    .headers(requestContext::applyTo)
                     .body(request)
                     .retrieve()
                     .body(TransferResponse.class);
@@ -57,62 +97,35 @@ public class AccountClient {
             }
 
             return response;
-
         } catch (
                 HttpClientErrorException.BadRequest
                 | HttpClientErrorException.NotFound exception
         ) {
-            /*
-             * Business rejection:
-             * - insufficient funds
-             * - inactive account
-             * - account not found
-             * - invalid transfer
-             * - destination balance limit
-             */
             throw new AccountTransferRejectedException(
                     extractDownstreamMessage(
                             exception,
                             "Account Service rejected the transfer."
                     )
             );
-
         } catch (HttpClientErrorException.Conflict exception) {
-            /*
-             * Usually a temporary concurrent-update or locking
-             * conflict. The caller may retry execution.
-             */
             throw new AccountTransferConflictException(
                     extractDownstreamMessage(
                             exception,
                             "The accounts are currently being updated. Please retry the transfer."
                     )
             );
-
         } catch (HttpClientErrorException exception) {
-            /*
-             * Unexpected downstream 4xx statuses, such as internal
-             * authorization or routing problems, should not be
-             * presented as an ordinary banking validation error.
-             */
             throw new AccountServiceBadGatewayException(
                     "Account Service rejected the internal request unexpectedly."
             );
-
         } catch (HttpServerErrorException exception) {
             throw new AccountServiceBadGatewayException(
                     "Account Service failed while processing the transfer."
             );
-
         } catch (ResourceAccessException exception) {
-            /*
-             * Covers connection failures and, depending on the
-             * configured HTTP client, network timeouts.
-             */
             throw new AccountServiceUnavailableException(
                     "Account Service is currently unavailable."
             );
-
         } catch (RestClientException exception) {
             throw new AccountServiceBadGatewayException(
                     "An invalid response was received from Account Service."
@@ -133,14 +146,10 @@ public class AccountClient {
             if (errorResponse != null
                     && errorResponse.message() != null
                     && !errorResponse.message().isBlank()) {
-
                 return errorResponse.message();
             }
         } catch (RuntimeException ignored) {
-            /*
-             * The downstream body may be empty, malformed, or use
-             * an unexpected structure. Use the safe fallback.
-             */
+            // Use the safe fallback below.
         }
 
         return fallbackMessage;

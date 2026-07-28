@@ -72,6 +72,18 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(InvalidAppNameException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidAppName(
+            InvalidAppNameException exception,
+            HttpServletRequest request
+    ) {
+        return buildError(
+                HttpStatus.BAD_REQUEST,
+                exception.getMessage(),
+                request.getRequestURI()
+        );
+    }
+
     /*
      * ============================================================
      * Request-body validation
