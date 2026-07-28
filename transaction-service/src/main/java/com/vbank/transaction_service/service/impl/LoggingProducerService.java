@@ -13,7 +13,6 @@ public class LoggingProducerService {
     private final KafkaTemplate<String, LogMessage> kafkaTemplate;
 
     public void send(LogMessage logMessage) {
-        System.out.println("Sending to Kafka: " + logMessage);
         kafkaTemplate.send(TOPIC, logMessage);
     }
 }
