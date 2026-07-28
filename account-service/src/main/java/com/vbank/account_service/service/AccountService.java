@@ -111,13 +111,13 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountResponse getAccount(UUID accountId) {
         Account account = findAccount(accountId);
-        logOperation(
-                "Account retrieved successfully.",
-                "GET",
-                "/accounts/{accountId}",
-                200,
-                account.getAccountId()
-        );
+//        logOperation(
+//                "Account retrieved successfully.",
+//                "GET",
+//                "/accounts/{accountId}",
+//                200,
+//                account.getAccountId()
+//        );
 
         return toResponse(account);
     }
