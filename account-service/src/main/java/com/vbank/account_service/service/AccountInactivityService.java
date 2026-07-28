@@ -5,60 +5,72 @@ import com.vbank.account_service.dto.MessageType;
 import com.vbank.account_service.entity.AccountStatus;
 import com.vbank.account_service.entity.AccountType;
 import com.vbank.account_service.repository.AccountRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 
 @Service
 public class AccountInactivityService {
 
-    private static final Duration INACTIVITY_PERIOD =
-            Duration.ofHours(24);
-
     private final AccountRepository accountRepository;
     private final Clock clock;
     private final LoggingProducerService loggingProducerService;
+    private final Duration inactivityThreshold;
 
     public AccountInactivityService(
             AccountRepository accountRepository,
             Clock clock,
-            LoggingProducerService loggingProducerService
+            LoggingProducerService loggingProducerService,
+            @Value("${account.inactivity.threshold-hours:24}")
+            long inactivityThresholdHours
     ) {
+        if (inactivityThresholdHours <= 0) {
+            throw new IllegalArgumentException(
+                    "Account inactivity threshold must be greater than zero hours."
+            );
+        }
+
         this.accountRepository = accountRepository;
         this.clock = clock;
         this.loggingProducerService = loggingProducerService;
+        this.inactivityThreshold =
+                Duration.ofHours(inactivityThresholdHours);
     }
 
     @Transactional
     public int inactivateStaleAccounts() {
-        Instant now = clock.instant();
-        Instant cutoff = now.minus(INACTIVITY_PERIOD);
+        Instant currentTime = clock.instant();
+        Instant cutoff = currentTime.minus(inactivityThreshold);
 
-        int inactiveAccountCount = accountRepository.markStaleAccountsInactive(
-                AccountStatus.ACTIVE,
-                AccountStatus.INACTIVE,
-                AccountType.SYSTEM,
-                cutoff,
-                now
-        );
+        int inactiveAccountCount =
+                accountRepository.markStaleAccountsInactive(
+                        AccountStatus.ACTIVE,
+                        AccountStatus.INACTIVE,
+                        AccountType.SYSTEM,
+                        cutoff,
+                        currentTime
+                );
 
         loggingProducerService.send(
                 LogMessage.builder()
                         .message(
-                                "Account inactivity operation completed. Accounts marked inactive: "
+                                "Account inactivity job completed. Accounts marked inactive: "
                                         + inactiveAccountCount
                                         + "."
                         )
-                        .messageType(MessageType.REQUEST)
-                        .dateTime(now)
+                        .messageType(MessageType.RESPONSE)
+                        .dateTime(currentTime)
                         .serviceName("account-service")
                         .httpMethod("SCHEDULED")
-                        .path("/accounts/inactivity")
+                        .path("/internal/accounts/inactivity")
                         .statusCode(200)
-                        .appName("Virtual Bank")
+                        .correlationId(UUID.randomUUID())
+                        .appName("SYSTEM")
                         .build()
         );
 

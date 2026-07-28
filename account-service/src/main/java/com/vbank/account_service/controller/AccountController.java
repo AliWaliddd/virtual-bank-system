@@ -6,7 +6,9 @@ import com.vbank.account_service.dto.response.AccountResponse;
 import com.vbank.account_service.dto.response.ActivateAccountResponse;
 import com.vbank.account_service.dto.response.CreateAccountResponse;
 import com.vbank.account_service.dto.response.TransferResponse;
+import com.vbank.account_service.model.RequestContext;
 import com.vbank.account_service.service.AccountService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -33,10 +35,14 @@ public class AccountController {
 
     @PostMapping("/accounts")
     public ResponseEntity<CreateAccountResponse> createAccount(
-            @Valid @RequestBody CreateAccountRequest request
+            @Valid @RequestBody CreateAccountRequest request,
+            HttpServletRequest servletRequest
     ) {
         CreateAccountResponse response =
-                accountService.createAccount(request);
+                accountService.createAccount(
+                        request,
+                        RequestContext.from(servletRequest)
+                );
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)

@@ -1,8 +1,6 @@
 package com.vbank.account_service.service;
 
 import com.vbank.account_service.client.UserServiceClient;
-import com.vbank.account_service.dto.LogMessage;
-import com.vbank.account_service.dto.MessageType;
 import com.vbank.account_service.dto.request.CreateAccountRequest;
 import com.vbank.account_service.dto.request.TransferRequest;
 import com.vbank.account_service.dto.response.AccountResponse;
@@ -17,6 +15,7 @@ import com.vbank.account_service.exception.BalanceLimitExceededException;
 import com.vbank.account_service.exception.InsufficientFundsException;
 import com.vbank.account_service.exception.InvalidAccountOperationException;
 import com.vbank.account_service.exception.NoAccountsFoundException;
+import com.vbank.account_service.model.RequestContext;
 import com.vbank.account_service.repository.AccountRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,26 +38,27 @@ public class AccountService {
     private final AccountNumberGenerator accountNumberGenerator;
     private final UserServiceClient userServiceClient;
     private final Clock clock;
-    private final LoggingProducerService loggingProducerService;
 
     public AccountService(
             AccountRepository accountRepository,
             AccountNumberGenerator accountNumberGenerator,
             UserServiceClient userServiceClient,
-            Clock clock,
-            LoggingProducerService loggingProducerService
+            Clock clock
     ) {
         this.accountRepository = accountRepository;
         this.accountNumberGenerator = accountNumberGenerator;
         this.userServiceClient = userServiceClient;
         this.clock = clock;
-        this.loggingProducerService = loggingProducerService;
     }
 
     public CreateAccountResponse createAccount(
-            CreateAccountRequest request
+            CreateAccountRequest request,
+            RequestContext requestContext
     ) {
-        userServiceClient.verifyUserExists(request.userId());
+        userServiceClient.verifyUserExists(
+                request.userId(),
+                requestContext
+        );
 
         AccountType accountType = parsePublicAccountType(
                 request.accountType()
@@ -69,14 +69,6 @@ public class AccountService {
         );
 
         if (initialBalance.compareTo(MAX_BALANCE) > 0) {
-            logOperation(
-                    "Initial balance exceeds the permitted account balance limit.",
-                    "POST",
-                    "/accounts",
-                    400,
-                    request.userId()
-            );
-
             throw new BalanceLimitExceededException(
                     "Initial balance exceeds the permitted account balance limit."
             );
@@ -93,13 +85,6 @@ public class AccountService {
         );
 
         Account savedAccount = accountRepository.save(account);
-        logOperation(
-                "Account created successfully.",
-                "POST",
-                "/accounts",
-                201,
-                savedAccount.getAccountId()
-        );
 
         return new CreateAccountResponse(
                 savedAccount.getAccountId(),
@@ -110,16 +95,7 @@ public class AccountService {
 
     @Transactional(readOnly = true)
     public AccountResponse getAccount(UUID accountId) {
-        Account account = findAccount(accountId);
-        logOperation(
-                "Account retrieved successfully.",
-                "GET",
-                "/accounts/{accountId}",
-                200,
-                account.getAccountId()
-        );
-
-        return toResponse(account);
+        return toResponse(findAccount(accountId));
     }
 
     @Transactional(readOnly = true)
@@ -134,14 +110,6 @@ public class AccountService {
                     "No accounts found for user ID " + userId + "."
             );
         }
-
-        logOperation(
-                "Accounts retrieved successfully for user.",
-                "GET",
-                "/users/{userId}/accounts",
-                200,
-                userId
-        );
 
         return accounts.stream()
                 .map(this::toResponse)
@@ -159,21 +127,7 @@ public class AccountService {
             );
         }
 
-        /*
-         * The operation is idempotent.
-         *
-         * Calling activate on an already-active account does not
-         * alter reactivatedAt or extend its inactivity period.
-         */
         if (account.getStatus() == AccountStatus.ACTIVE) {
-            logOperation(
-                    "Account activation skipped because account is already active.",
-                    "PUT",
-                    "/accounts/{accountId}/activate",
-                    200,
-                    account.getAccountId()
-            );
-
             return new ActivateAccountResponse(
                     account.getAccountId(),
                     account.getStatus(),
@@ -183,16 +137,7 @@ public class AccountService {
         }
 
         Instant activationTime = clock.instant();
-
         account.activate(activationTime);
-
-        logOperation(
-                "Account activated successfully.",
-                "PUT",
-                "/accounts/{accountId}/activate",
-                200,
-                account.getAccountId()
-        );
 
         return new ActivateAccountResponse(
                 account.getAccountId(),
@@ -208,14 +153,6 @@ public class AccountService {
         if (request.fromAccountId().equals(
                 request.toAccountId()
         )) {
-            logOperation(
-                    "Transfer rejected because source and destination accounts are the same.",
-                    "PUT",
-                    "/accounts/transfer",
-                    400,
-                    request.fromAccountId()
-            );
-
             throw new InvalidAccountOperationException(
                     "The source and destination accounts must be different."
             );
@@ -224,14 +161,6 @@ public class AccountService {
         BigDecimal amount = normalizeMoney(request.amount());
 
         if (amount.signum() <= 0) {
-            logOperation(
-                    "Transfer rejected because amount is not greater than zero.",
-                    "PUT",
-                    "/accounts/transfer",
-                    400,
-                    request.fromAccountId()
-            );
-
             throw new InvalidAccountOperationException(
                     "Transfer amount must be greater than zero."
             );
@@ -269,18 +198,6 @@ public class AccountService {
 
         fromAccount.debit(amount, transactionTime);
         toAccount.credit(amount, transactionTime);
-
-        logOperation(
-                "Transfer completed successfully from account "
-                        + fromAccount.getAccountId()
-                        + " to account "
-                        + toAccount.getAccountId()
-                        + ".",
-                "PUT",
-                "/accounts/transfer",
-                200,
-                fromAccount.getAccountId()
-        );
 
         return new TransferResponse(
                 "Account updated successfully."
@@ -424,28 +341,6 @@ public class AccountService {
                 account.getAccountType(),
                 account.getBalance(),
                 account.getStatus()
-        );
-    }
-
-    private void logOperation(
-            String message,
-            String httpMethod,
-            String path,
-            Integer statusCode,
-            UUID correlationId
-    ) {
-        loggingProducerService.send(
-                LogMessage.builder()
-                        .message(message)
-                        .messageType(MessageType.REQUEST)
-                        .dateTime(clock.instant())
-                        .serviceName("account-service")
-                        .httpMethod(httpMethod)
-                        .path(path)
-                        .statusCode(statusCode)
-                        .correlationId(correlationId)
-                        .appName("Virtual Bank")
-                        .build()
         );
     }
 
