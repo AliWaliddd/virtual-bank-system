@@ -61,6 +61,11 @@ jobs:
       - name: Wait for Services
         run: sleep 20
 
+      - name: Show Docker Compose Logs
+        if: always()
+        working-directory: ./infrastructure
+        run: docker compose logs
+
       - name: Verify Running Containers
         run: docker ps
 
