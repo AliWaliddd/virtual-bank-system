@@ -9,7 +9,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public record RequestContext(
-        String authorization,
         String appName,
         UUID correlationId
 ) {
@@ -30,17 +29,12 @@ public record RequestContext(
         UUID correlationId = resolveCorrelationId(request);
 
         return new RequestContext(
-                request.getHeader(HttpHeaders.AUTHORIZATION),
                 appName,
                 correlationId
         );
     }
 
     public void applyTo(HttpHeaders headers) {
-        if (authorization != null && !authorization.isBlank()) {
-            headers.set(HttpHeaders.AUTHORIZATION, authorization);
-        }
-
         headers.set(APP_NAME_HEADER, appName);
         headers.set(
                 CORRELATION_ID_HEADER,

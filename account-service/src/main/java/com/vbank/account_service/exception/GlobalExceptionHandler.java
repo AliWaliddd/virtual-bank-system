@@ -80,17 +80,6 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(UserServiceAuthorizationException.class)
-    public ResponseEntity<ApiError> handleUserServiceAuthorization(
-            UserServiceAuthorizationException exception,
-            HttpServletRequest request
-    ) {
-        return buildError(
-                HttpStatus.BAD_GATEWAY,
-                exception.getMessage(),
-                request.getRequestURI()
-        );
-    }
 
     @ExceptionHandler(UserServiceUnavailableException.class)
     public ResponseEntity<ApiError> handleUserServiceUnavailable(

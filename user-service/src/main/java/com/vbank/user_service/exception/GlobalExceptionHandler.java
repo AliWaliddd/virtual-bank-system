@@ -79,18 +79,6 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(MissingAuthorizationHeaderException.class)
-    public ResponseEntity<ApiError> handleMissingAuthorizationHeader(
-            MissingAuthorizationHeaderException exception,
-            HttpServletRequest request
-    ) {
-        return buildError(
-                HttpStatus.UNAUTHORIZED,
-                exception.getMessage(),
-                request.getRequestURI()
-        );
-    }
-
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ApiError> handleUserNotFound(
             UserNotFoundException exception,

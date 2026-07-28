@@ -9,7 +9,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public record RequestContext(
-        String authorization,
         String appName,
         UUID correlationId
 ) {
@@ -30,37 +29,19 @@ public record RequestContext(
         UUID correlationId = resolveCorrelationId(request);
 
         return new RequestContext(
-                request.getHeader(HttpHeaders.AUTHORIZATION),
                 appName,
                 correlationId
         );
     }
 
     public void applyTo(HttpHeaders headers) {
-        if (authorization != null && !authorization.isBlank()) {
-            headers.set(HttpHeaders.AUTHORIZATION, authorization);
-        }
-
-        applyCommonHeaders(headers);
+        headers.set(APP_NAME_HEADER, appName);
+        headers.set(
+                CORRELATION_ID_HEADER,
+                correlationId.toString()
+        );
     }
 
-    public void applyTo(
-            HttpHeaders headers,
-            String authorizationOverride
-    ) {
-        if (authorizationOverride != null
-                && !authorizationOverride.isBlank()) {
-            headers.set(
-                    HttpHeaders.AUTHORIZATION,
-                    authorizationOverride
-            );
-        } else if (authorization != null
-                && !authorization.isBlank()) {
-            headers.set(HttpHeaders.AUTHORIZATION, authorization);
-        }
-
-        applyCommonHeaders(headers);
-    }
 
     public static UUID resolveOrCreateCorrelationId(String value) {
         if (value == null || value.isBlank()) {
@@ -86,13 +67,6 @@ public record RequestContext(
                 : "UNKNOWN";
     }
 
-    private void applyCommonHeaders(HttpHeaders headers) {
-        headers.set(APP_NAME_HEADER, appName);
-        headers.set(
-                CORRELATION_ID_HEADER,
-                correlationId.toString()
-        );
-    }
 
     private static String validateAppName(String value) {
         if (value == null || value.isBlank()) {

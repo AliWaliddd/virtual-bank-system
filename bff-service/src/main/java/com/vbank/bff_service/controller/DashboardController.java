@@ -2,7 +2,6 @@ package com.vbank.bff_service.controller;
 
 import com.vbank.bff_service.dto.response.DashboardResponse;
 import com.vbank.bff_service.exception.InvalidUuidException;
-import com.vbank.bff_service.exception.MissingAuthorizationHeaderException;
 import com.vbank.bff_service.filter.CorrelationIdFilter;
 import com.vbank.bff_service.model.RequestContext;
 import com.vbank.bff_service.service.DashboardService;
@@ -32,26 +31,16 @@ public class DashboardController {
     public Mono<DashboardResponse> getDashboard(
             @PathVariable String userId,
             @RequestHeader(
-                    value = HttpHeaders.AUTHORIZATION,
-                    required = false
-            ) String authorization,
-            @RequestHeader(
                     value = "APP-NAME",
                     required = false
             ) String appName,
             @RequestHeader(CorrelationIdFilter.HEADER_NAME)
             String correlationId
     ) {
-        if (authorization == null || authorization.isBlank()) {
-            throw new MissingAuthorizationHeaderException(
-                    "Authorization header is required."
-            );
-        }
 
         UUID parsedUserId = parseUserId(userId);
 
         RequestContext requestContext = new RequestContext(
-                authorization,
                 appName,
                 correlationId
         );
