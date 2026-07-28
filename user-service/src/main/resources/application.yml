@@ -1,22 +1,39 @@
 server:
-  port: 8081
+  port: ${USER_SERVICE_PORT:8081}
 
 spring:
-  kafka:
-      bootstrap-servers: kafka:9092
   application:
     name: user-service
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
   datasource:
-    url: jdbc:postgresql://postgres:5432/vbank_users
-    username: vbank
-    password: vbank_password
+    url: ${USER_DB_URL:jdbc:postgresql://postgres:5432/vbank_users}
+    username: ${USER_DB_USERNAME:vbank}
+    password: ${USER_DB_PASSWORD:vbank_password}
     driver-class-name: org.postgresql.Driver
 
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
+        jdbc:
+          time_zone: UTC
+
+vbank:
+  logging:
+    topic: ${VBANK_LOGGING_TOPIC:vbank.logs}
+    max-body-length: ${VBANK_LOGGING_MAX_BODY_LENGTH:10000}
+    kafka:
+      max-block-ms: ${VBANK_KAFKA_MAX_BLOCK_MS:1000}
+      request-timeout-ms: ${VBANK_KAFKA_REQUEST_TIMEOUT_MS:3000}
+      delivery-timeout-ms: ${VBANK_KAFKA_DELIVERY_TIMEOUT_MS:5000}

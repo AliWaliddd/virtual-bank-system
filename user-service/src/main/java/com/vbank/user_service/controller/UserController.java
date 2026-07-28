@@ -10,20 +10,21 @@ import com.vbank.user_service.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/users")
 public class UserController {
-
-    private static final Logger LOGGER =
-            LoggerFactory.getLogger(UserController.class);
 
     private final UserService userService;
 
@@ -51,17 +52,8 @@ public class UserController {
             consumes = MediaType.APPLICATION_JSON_VALUE
     )
     public ResponseEntity<LoginResponse> login(
-            @Valid @RequestBody LoginRequest request,
-            @RequestHeader(
-                    value = "APP-NAME",
-                    required = false
-            ) String appName
+            @Valid @RequestBody LoginRequest request
     ) {
-        LOGGER.info(
-                "Login request received with APP-NAME={}",
-                appName
-        );
-
         LoginResponse response =
                 userService.login(request);
 
@@ -88,8 +80,8 @@ public class UserController {
     private void validateAuthorizationHeader(
             String authorizationHeader
     ) {
-        if (authorizationHeader == null ||
-                authorizationHeader.isBlank()) {
+        if (authorizationHeader == null
+                || authorizationHeader.isBlank()) {
 
             throw new MissingAuthorizationHeaderException(
                     "Authorization header is required."

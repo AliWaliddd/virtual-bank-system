@@ -1,7 +1,5 @@
 package com.vbank.user_service.service;
 
-import com.vbank.user_service.dto.LogMessage;
-import com.vbank.user_service.dto.MessageType;
 import com.vbank.user_service.dto.request.LoginRequest;
 import com.vbank.user_service.dto.request.RegisterUserRequest;
 import com.vbank.user_service.dto.response.LoginResponse;
@@ -18,8 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
 import java.util.UUID;
-import java.time.Clock;
-
 
 @Service
 @Transactional
@@ -27,15 +23,13 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final LoggingProducerService loggingProducerService;
+
     public UserService(
             UserRepository userRepository,
-            PasswordEncoder passwordEncoder,
-            LoggingProducerService loggingProducerService
+            PasswordEncoder passwordEncoder
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
-        this.loggingProducerService = loggingProducerService;
     }
 
     /**
@@ -64,13 +58,6 @@ public class UserService {
                 );
 
         if (usernameExists || emailExists) {
-            logOperation(
-                    "Username or email already exists tried to register.",
-                    "POST",
-                    "/users/register",
-                    400,
-                    null
-            );
             throw new UserAlreadyExistsException(
                     "Username or email already exists."
             );
@@ -88,14 +75,6 @@ public class UserService {
         );
 
         User savedUser = userRepository.save(user);
-
-        logOperation(
-                "User registered successfully.",
-                "POST",
-                "/users/register",
-                201,
-                savedUser.getUserId()
-        );
 
         return new RegisterUserResponse(
                 savedUser.getUserId(),
@@ -131,14 +110,6 @@ public class UserService {
             throw invalidCredentials();
         }
 
-        logOperation(
-                "User logged in successfully.",
-                "POST",
-                "/users/login",
-                200,
-                user.getUserId()
-        );
-
         return new LoginResponse(
                 user.getUserId(),
                 user.getUsername()
@@ -165,14 +136,6 @@ public class UserService {
                         )
                 );
 
-        logOperation(
-                "User profile retrieved successfully.",
-                "GET",
-                "/users/{userId}/profile",
-                200,
-                user.getUserId()
-        );
-
         return new UserProfileResponse(
                 user.getUserId(),
                 user.getUsername(),
@@ -181,28 +144,7 @@ public class UserService {
                 user.getLastName()
         );
     }
-    private void logOperation(
-            String message,
-            String httpMethod,
-            String path,
-            Integer statusCode,
-            UUID correlationId
-    ) {
-        Clock clock = Clock.systemUTC();
-        loggingProducerService.send(
-                LogMessage.builder()
-                        .message(message)
-                        .messageType(MessageType.REQUEST)
-                        .dateTime(clock.instant())
-                        .serviceName("user-service")
-                        .httpMethod(httpMethod)
-                        .path(path)
-                        .statusCode(statusCode)
-                        .correlationId(correlationId)
-                        .appName("Virtual Bank")
-                        .build()
-        );
-    }
+
     private InvalidCredentialsException invalidCredentials() {
         return new InvalidCredentialsException(
                 "Invalid username or password."

@@ -1,24 +1,35 @@
 package com.vbank.user_service.exception;
 
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
-import org.springframework.web.HttpMediaTypeNotSupportedException;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(UserAlreadyExistsException.class)
     public ResponseEntity<ApiError> handleUserAlreadyExists(
@@ -27,6 +38,30 @@ public class GlobalExceptionHandler {
     ) {
         return buildError(
                 HttpStatus.CONFLICT,
+                exception.getMessage(),
+                request.getRequestURI()
+        );
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiError> handleDataIntegrityViolation(
+            DataIntegrityViolationException exception,
+            HttpServletRequest request
+    ) {
+        return buildError(
+                HttpStatus.CONFLICT,
+                "Username or email already exists.",
+                request.getRequestURI()
+        );
+    }
+
+    @ExceptionHandler(InvalidAppNameException.class)
+    public ResponseEntity<ApiError> handleInvalidAppName(
+            InvalidAppNameException exception,
+            HttpServletRequest request
+    ) {
+        return buildError(
+                HttpStatus.BAD_REQUEST,
                 exception.getMessage(),
                 request.getRequestURI()
         );
@@ -68,6 +103,8 @@ public class GlobalExceptionHandler {
         );
     }
 
+
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(
             MethodArgumentNotValidException exception,
@@ -78,6 +115,47 @@ public class GlobalExceptionHandler {
                 .stream()
                 .map(this::formatFieldError)
                 .collect(Collectors.joining("; "));
+
+        if (message.isBlank()) {
+            message = "One or more request fields are invalid.";
+        }
+
+        return buildError(
+                HttpStatus.BAD_REQUEST,
+                message,
+                request.getRequestURI()
+        );
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiError> handleMethodValidation(
+            HandlerMethodValidationException exception,
+            HttpServletRequest request
+    ) {
+        return buildError(
+                HttpStatus.BAD_REQUEST,
+                "One or more request values are invalid.",
+                request.getRequestURI()
+        );
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiError> handleConstraintViolation(
+            ConstraintViolationException exception,
+            HttpServletRequest request
+    ) {
+        String message = exception.getConstraintViolations()
+                .stream()
+                .map(violation ->
+                        violation.getPropertyPath()
+                                + ": "
+                                + violation.getMessage()
+                )
+                .collect(Collectors.joining("; "));
+
+        if (message.isBlank()) {
+            message = "One or more request values are invalid.";
+        }
 
         return buildError(
                 HttpStatus.BAD_REQUEST,
@@ -91,9 +169,45 @@ public class GlobalExceptionHandler {
             MethodArgumentTypeMismatchException exception,
             HttpServletRequest request
     ) {
+        String message;
+
+        if (UUID.class.equals(exception.getRequiredType())) {
+            message = "Invalid UUID value for '"
+                    + exception.getName()
+                    + "'.";
+        } else {
+            message = "Invalid value for '"
+                    + exception.getName()
+                    + "'.";
+        }
+
         return buildError(
                 HttpStatus.BAD_REQUEST,
-                "Invalid value for '" + exception.getName() + "'.",
+                message,
+                request.getRequestURI()
+        );
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> handleUnreadableMessage(
+            HttpMessageNotReadableException exception,
+            HttpServletRequest request
+    ) {
+        Throwable cause = exception.getMostSpecificCause();
+
+        if (cause instanceof UnrecognizedPropertyException propertyException) {
+            return buildError(
+                    HttpStatus.BAD_REQUEST,
+                    "Unknown JSON field '"
+                            + propertyException.getPropertyName()
+                            + "'.",
+                    request.getRequestURI()
+            );
+        }
+
+        return buildError(
+                HttpStatus.BAD_REQUEST,
+                "Malformed or missing JSON request body.",
                 request.getRequestURI()
         );
     }
@@ -104,7 +218,8 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         String message =
-                "HTTP method '" + exception.getMethod()
+                "HTTP method '"
+                        + exception.getMethod()
                         + "' is not supported for this endpoint.";
 
         if (exception.getSupportedHttpMethods() != null
@@ -138,9 +253,11 @@ public class GlobalExceptionHandler {
                         : exception.getSupportedMediaTypes().toString();
 
         String message =
-                "Content type '" + receivedContentType
+                "Content type '"
+                        + receivedContentType
                         + "' is not supported. Supported content types: "
-                        + supportedContentTypes + ".";
+                        + supportedContentTypes
+                        + ".";
 
         return buildError(
                 HttpStatus.UNSUPPORTED_MEDIA_TYPE,
@@ -149,14 +266,14 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiError> handleUnreadableMessage(
-            HttpMessageNotReadableException exception,
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ApiError> handleNotAcceptable(
+            HttpMediaTypeNotAcceptableException exception,
             HttpServletRequest request
     ) {
         return buildError(
-                HttpStatus.BAD_REQUEST,
-                "Malformed or missing JSON request body.",
+                HttpStatus.NOT_ACCEPTABLE,
+                "The requested response format is not supported.",
                 request.getRequestURI()
         );
     }
@@ -190,6 +307,13 @@ public class GlobalExceptionHandler {
             Exception exception,
             HttpServletRequest request
     ) {
+        LOGGER.error(
+                "Unexpected error while processing {} {}.",
+                request.getMethod(),
+                request.getRequestURI(),
+                exception
+        );
+
         return buildError(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "An unexpected internal error occurred.",
@@ -198,7 +322,9 @@ public class GlobalExceptionHandler {
     }
 
     private String formatFieldError(FieldError fieldError) {
-        return fieldError.getField() + ": " + fieldError.getDefaultMessage();
+        return fieldError.getField()
+                + ": "
+                + fieldError.getDefaultMessage();
     }
 
     private ResponseEntity<ApiError> buildError(
