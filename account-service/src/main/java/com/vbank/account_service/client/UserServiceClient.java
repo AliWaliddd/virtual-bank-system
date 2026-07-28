@@ -1,7 +1,6 @@
 package com.vbank.account_service.client;
 
 import com.vbank.account_service.exception.UserNotFoundException;
-import com.vbank.account_service.exception.UserServiceAuthorizationException;
 import com.vbank.account_service.exception.UserServiceUnavailableException;
 import com.vbank.account_service.model.RequestContext;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,18 +18,15 @@ public class UserServiceClient {
 
     private final RestClient restClient;
     private final String userServiceBaseUrl;
-    private final String internalAuthorizationHeader;
 
     public UserServiceClient(
             RestClient restClient,
             @Value("${services.user.base-url}")
-            String userServiceBaseUrl,
-            @Value("${services.user.internal-authorization}")
-            String internalAuthorizationHeader
+            String userServiceBaseUrl
+
     ) {
         this.restClient = restClient;
         this.userServiceBaseUrl = userServiceBaseUrl;
-        this.internalAuthorizationHeader = internalAuthorizationHeader;
     }
 
     public void verifyUserExists(
@@ -45,25 +41,13 @@ public class UserServiceClient {
                                     + "/users/{userId}/profile",
                             userId
                     )
-                    .headers(headers ->
-                            requestContext.applyTo(
-                                    headers,
-                                    internalAuthorizationHeader
-                            )
-                    )
+                    .headers(requestContext::applyTo)
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().equals(HttpStatus.NOT_FOUND)) {
                 throw new UserNotFoundException(
                         "User with ID " + userId + " not found."
-                );
-            }
-
-            if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)
-                    || exception.getStatusCode().equals(HttpStatus.FORBIDDEN)) {
-                throw new UserServiceAuthorizationException(
-                        "User Service rejected the Account Service authorization."
                 );
             }
 

@@ -32,7 +32,6 @@ spring:
 services:
   user:
     base-url: ${USER_SERVICE_BASE_URL:http://user-service:8081}
-    internal-authorization: ${USER_SERVICE_INTERNAL_AUTHORIZATION:Bearer account-service-internal}
     connect-timeout: ${USER_SERVICE_CONNECT_TIMEOUT:2s}
     read-timeout: ${USER_SERVICE_READ_TIMEOUT:5s}
 

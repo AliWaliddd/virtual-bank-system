@@ -39,20 +39,6 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(MissingAuthorizationHeaderException.class)
-    public ResponseEntity<ApiError> handleMissingAuthorization(
-            MissingAuthorizationHeaderException exception,
-            ServerWebExchange exchange
-    ) {
-        return buildError(
-                HttpStatus.UNAUTHORIZED,
-                exception.getMessage(),
-                exchange,
-                null,
-                null
-        );
-    }
-
     @ExceptionHandler(DownstreamHttpException.class)
     public ResponseEntity<ApiError> handleDownstreamHttpError(
             DownstreamHttpException exception,
