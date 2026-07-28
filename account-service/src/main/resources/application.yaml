@@ -2,10 +2,11 @@ server:
   port: ${ACCOUNT_SERVICE_PORT:8082}
 
 spring:
-  kafka:
-    bootstrap-servers: kafka:9092
   application:
     name: account-service
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
 
   jackson:
     deserialization:
@@ -21,7 +22,7 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -32,9 +33,20 @@ services:
   user:
     base-url: ${USER_SERVICE_BASE_URL:http://user-service:8081}
     internal-authorization: ${USER_SERVICE_INTERNAL_AUTHORIZATION:Bearer account-service-internal}
+    connect-timeout: ${USER_SERVICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${USER_SERVICE_READ_TIMEOUT:5s}
 
 account:
   inactivity:
     cron: ${ACCOUNT_INACTIVITY_CRON:0 0 * * * *}
     zone: ${ACCOUNT_INACTIVITY_ZONE:UTC}
     threshold-hours: ${ACCOUNT_INACTIVITY_THRESHOLD_HOURS:24}
+
+vbank:
+  logging:
+    topic: ${VBANK_LOGGING_TOPIC:vbank.logs}
+    max-body-length: ${VBANK_LOGGING_MAX_BODY_LENGTH:10000}
+    kafka:
+      max-block-ms: ${VBANK_KAFKA_MAX_BLOCK_MS:1000}
+      request-timeout-ms: ${VBANK_KAFKA_REQUEST_TIMEOUT_MS:3000}
+      delivery-timeout-ms: ${VBANK_KAFKA_DELIVERY_TIMEOUT_MS:5000}

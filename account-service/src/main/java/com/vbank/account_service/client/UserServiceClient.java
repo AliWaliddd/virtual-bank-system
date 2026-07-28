@@ -3,12 +3,13 @@ package com.vbank.account_service.client;
 import com.vbank.account_service.exception.UserNotFoundException;
 import com.vbank.account_service.exception.UserServiceAuthorizationException;
 import com.vbank.account_service.exception.UserServiceUnavailableException;
+import com.vbank.account_service.model.RequestContext;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.util.UUID;
@@ -17,25 +18,38 @@ import java.util.UUID;
 public class UserServiceClient {
 
     private final RestClient restClient;
+    private final String userServiceBaseUrl;
     private final String internalAuthorizationHeader;
 
     public UserServiceClient(
-            @Value("${services.user.base-url}") String userServiceBaseUrl,
+            RestClient restClient,
+            @Value("${services.user.base-url}")
+            String userServiceBaseUrl,
             @Value("${services.user.internal-authorization}")
             String internalAuthorizationHeader
     ) {
-        this.restClient = RestClient.create(userServiceBaseUrl);
+        this.restClient = restClient;
+        this.userServiceBaseUrl = userServiceBaseUrl;
         this.internalAuthorizationHeader = internalAuthorizationHeader;
     }
 
-    public void verifyUserExists(UUID userId) {
+    public void verifyUserExists(
+            UUID userId,
+            RequestContext requestContext
+    ) {
         try {
             restClient
                     .get()
-                    .uri("/users/{userId}/profile", userId)
-                    .header(
-                            HttpHeaders.AUTHORIZATION,
-                            internalAuthorizationHeader
+                    .uri(
+                            userServiceBaseUrl
+                                    + "/users/{userId}/profile",
+                            userId
+                    )
+                    .headers(headers ->
+                            requestContext.applyTo(
+                                    headers,
+                                    internalAuthorizationHeader
+                            )
                     )
                     .retrieve()
                     .toBodilessEntity();
@@ -59,6 +73,10 @@ public class UserServiceClient {
         } catch (ResourceAccessException exception) {
             throw new UserServiceUnavailableException(
                     "User Service is currently unavailable."
+            );
+        } catch (RestClientException exception) {
+            throw new UserServiceUnavailableException(
+                    "An invalid response was received from User Service."
             );
         }
     }
