@@ -1,20 +1,24 @@
 package com.vbank.transaction_service.service.impl;
 
 import com.vbank.transaction_service.client.AccountClient;
-import com.vbank.transaction_service.dto.*;
 import com.vbank.transaction_service.dto.Request.TransferRequest;
 import com.vbank.transaction_service.dto.TransactionResponse;
 import com.vbank.transaction_service.dto.TransferExecutionRequest;
 import com.vbank.transaction_service.dto.TransferInitiationRequest;
 import com.vbank.transaction_service.entity.Transaction;
 import com.vbank.transaction_service.enums.TransactionStatus;
+import com.vbank.transaction_service.exceptions.AccountServiceBadGatewayException;
+import com.vbank.transaction_service.exceptions.AccountServiceUnavailableException;
+import com.vbank.transaction_service.exceptions.AccountTransferConflictException;
+import com.vbank.transaction_service.exceptions.AccountTransferRejectedException;
 import com.vbank.transaction_service.exceptions.InvalidTransferException;
 import com.vbank.transaction_service.exceptions.TransactionAlreadyProcessedException;
 import com.vbank.transaction_service.exceptions.TransactionNotFoundException;
-import com.vbank.transaction_service.exceptions.TransferFailedException;
+import com.vbank.transaction_service.model.RequestContext;
 import com.vbank.transaction_service.repository.TransactionRepository;
 import com.vbank.transaction_service.service.TransactionService;
-import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 
@@ -23,20 +27,37 @@ import java.util.List;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 public class TransactionServiceImpl implements TransactionService {
+
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(TransactionServiceImpl.class);
 
     private final TransactionRepository transactionRepository;
     private final AccountClient accountClient;
-    private final LoggingProducerService loggingProducerService;
+
+    public TransactionServiceImpl(
+            TransactionRepository transactionRepository,
+            AccountClient accountClient
+    ) {
+        this.transactionRepository = transactionRepository;
+        this.accountClient = accountClient;
+    }
 
     @Override
-    public TransactionResponse initiateTransfer(TransferInitiationRequest request) {
-
+    public TransactionResponse initiateTransfer(
+            TransferInitiationRequest request,
+            RequestContext requestContext
+    ) {
         validateTransfer(request);
 
-        validateAccountsExist(request.getFromAccountId());
-        validateAccountsExist(request.getToAccountId());
+        validateAccountExists(
+                request.getFromAccountId(),
+                requestContext
+        );
+        validateAccountExists(
+                request.getToAccountId(),
+                requestContext
+        );
 
         Transaction transaction = Transaction.builder()
                 .fromAccountId(request.getFromAccountId())
@@ -45,26 +66,16 @@ public class TransactionServiceImpl implements TransactionService {
                 .status(TransactionStatus.INITIATED)
                 .build();
 
-        Transaction savedTransaction = transactionRepository.save(transaction);
-        loggingProducerService.send(
-                LogMessage.builder()
-                        .message("Transaction initiated successfully.")
-                        .messageType(MessageType.REQUEST)
-                        .dateTime(Instant.now())
-                        .serviceName("transaction-service")
-                        .httpMethod("POST")
-                        .path("/transactions/transfer/initiation")
-                        .statusCode(200)
-                        .correlationId(savedTransaction.getId())
-                        .appName("Virtual Bank")
-                        .build()
-        );
+        Transaction savedTransaction =
+                transactionRepository.saveAndFlush(transaction);
+
         return mapToResponse(savedTransaction);
     }
 
     @Override
     public TransactionResponse executeTransfer(
-            TransferExecutionRequest request
+            TransferExecutionRequest request,
+            RequestContext requestContext
     ) {
         Transaction transaction = transactionRepository
                 .findById(request.getTransactionId())
@@ -74,115 +85,130 @@ public class TransactionServiceImpl implements TransactionService {
                         )
                 );
 
-        if (transaction.getStatus()
-                != TransactionStatus.INITIATED) {
-
+        if (transaction.getStatus() != TransactionStatus.INITIATED) {
             throw new TransactionAlreadyProcessedException();
         }
-
-        validateAccountsExist(
-                transaction.getFromAccountId()
-        );
-
-        validateAccountsExist(
-                transaction.getToAccountId()
-        );
 
         TransferRequest transferRequest = new TransferRequest(
                 transaction.getFromAccountId(),
                 transaction.getToAccountId(),
                 transaction.getAmount()
         );
-        Transaction savedTransaction;
+
         try {
-            accountClient.transfer(transferRequest);
-
-            transaction.setStatus(
-                    TransactionStatus.SUCCESS
+            accountClient.transfer(
+                    transferRequest,
+                    requestContext
+            );
+        } catch (AccountTransferRejectedException exception) {
+            markTransactionAsFailed(transaction, exception);
+            throw exception;
+        } catch (
+                AccountTransferConflictException
+                | AccountServiceUnavailableException
+                | AccountServiceBadGatewayException exception
+        ) {
+            LOGGER.warn(
+                    "Transaction {} remains INITIATED because Account Service returned a temporary or ambiguous failure: {}",
+                    transaction.getId(),
+                    exception.getMessage()
             );
 
-            transaction.setFailureReason(null);
-            transaction.setExecutedAt(Instant.now());
-
-            savedTransaction = transactionRepository.save(transaction);
-            loggingProducerService.send(
-                    LogMessage.builder()
-                            .message("Transaction Executed successfully.")
-                            .messageType(MessageType.REQUEST)
-                            .dateTime(Instant.now())
-                            .serviceName("transaction-service")
-                            .httpMethod("POST")
-                            .path("/transactions/transfer/execution")
-                            .statusCode(200)
-                            .correlationId(savedTransaction.getId())
-                            .appName("Virtual Bank")
-                            .build()
-            );
-        } catch (RuntimeException e) {
-            transaction.setExecutedAt(Instant.now());
-            transaction.setStatus(
-                    TransactionStatus.FAILED
-            );
-            transaction.setFailureReason(
-                    e.getMessage()
-            );
-            savedTransaction = transactionRepository.save(transaction);
-            loggingProducerService.send(
-                    LogMessage.builder()
-                            .message("Transaction Executed failed.")
-                            .messageType(MessageType.REQUEST)
-                            .dateTime(Instant.now())
-                            .serviceName("transaction-service")
-                            .httpMethod("POST")
-                            .path("/transactions/transfer/execution")
-                            .statusCode(400)
-                            .correlationId(savedTransaction.getId())
-                            .appName("Virtual Bank")
-                            .build()
-            );
-            throw new TransferFailedException(
-                    "Transfer failed: " + e.getMessage()
-            );
+            throw exception;
         }
 
+        transaction.setStatus(TransactionStatus.SUCCESS);
+        transaction.setFailureReason(null);
+        transaction.setExecutedAt(Instant.now());
+
+        Transaction savedTransaction =
+                transactionRepository.saveAndFlush(transaction);
 
         return mapToResponse(savedTransaction);
     }
 
     @Override
-    public List<TransactionResponse> getTransactions(UUID accountId) {
-        validateAccountsExist(accountId);
-        List<Transaction> transactions = transactionRepository
-                        .findByFromAccountIdOrToAccountIdOrderByCreatedAtDesc(
-                                accountId,
-                                accountId
-                        );
-        return transactions.stream()
+    public List<TransactionResponse> getTransactions(
+            UUID accountId,
+            RequestContext requestContext
+    ) {
+        validateAccountExists(accountId, requestContext);
+
+        return transactionRepository
+                .findByFromAccountIdOrToAccountIdOrderByCreatedAtDesc(
+                        accountId,
+                        accountId
+                )
+                .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
-    //helpers
-    private void validateTransfer(TransferInitiationRequest request) {
+    private void markTransactionAsFailed(
+            Transaction transaction,
+            RuntimeException transferException
+    ) {
+        transaction.setStatus(TransactionStatus.FAILED);
+        transaction.setExecutedAt(Instant.now());
+        transaction.setFailureReason(
+                safeFailureReason(transferException)
+        );
 
-        if (request.getFromAccountId().equals(request.getToAccountId())) {
+        try {
+            transactionRepository.saveAndFlush(transaction);
+        } catch (RuntimeException persistenceException) {
+            transferException.addSuppressed(persistenceException);
+
+            LOGGER.error(
+                    "Could not persist FAILED status for transaction {}.",
+                    transaction.getId(),
+                    persistenceException
+            );
+        }
+    }
+
+    private String safeFailureReason(RuntimeException exception) {
+        String message = exception.getMessage();
+
+        if (message == null || message.isBlank()) {
+            return exception.getClass().getSimpleName();
+        }
+
+        int maximumLength = 500;
+
+        return message.length() <= maximumLength
+                ? message
+                : message.substring(0, maximumLength);
+    }
+
+    private void validateTransfer(
+            TransferInitiationRequest request
+    ) {
+        if (request.getFromAccountId().equals(
+                request.getToAccountId()
+        )) {
             throw new InvalidTransferException(
                     "Sender and receiver accounts cannot be the same."
             );
         }
     }
-    private void validateAccountsExist(UUID Id) {
-        if (Id != null) {
-            try {
-                accountClient.getAccount(Id);
-            } catch (HttpClientErrorException.NotFound ex) {
-                throw new InvalidTransferException("account does not exist.");
-            }
+
+    private void validateAccountExists(
+            UUID accountId,
+            RequestContext requestContext
+    ) {
+        try {
+            accountClient.getAccount(accountId, requestContext);
+        } catch (HttpClientErrorException.NotFound exception) {
+            throw new InvalidTransferException(
+                    "Account does not exist."
+            );
         }
     }
 
-    private TransactionResponse mapToResponse(Transaction transaction) {
-
+    private TransactionResponse mapToResponse(
+            Transaction transaction
+    ) {
         return TransactionResponse.builder()
                 .transactionId(transaction.getId())
                 .fromAccountId(transaction.getFromAccountId())

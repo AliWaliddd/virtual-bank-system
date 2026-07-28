@@ -2,29 +2,42 @@ server:
   port: 8083
 
 spring:
-  kafka:
-    bootstrap-servers: kafka:9092
   application:
     name: transaction-service
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
 
   jackson:
     deserialization:
       fail-on-unknown-properties: true
 
   datasource:
-    url: jdbc:postgresql://postgres:5432/vbank_transactions
-    username: vbank
-    password: vbank_password
+    url: ${TRANSACTION_DB_URL:jdbc:postgresql://postgres:5432/vbank_transactions}
+    username: ${TRANSACTION_DB_USERNAME:vbank}
+    password: ${TRANSACTION_DB_PASSWORD:vbank_password}
     driver-class-name: org.postgresql.Driver
 
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
+
 account:
-    service:
-      url: http://account-service:8082
+  service:
+    url: ${ACCOUNT_SERVICE_URL:http://account-service:8082}
+    connect-timeout: ${ACCOUNT_SERVICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${ACCOUNT_SERVICE_READ_TIMEOUT:5s}
+
+vbank:
+  logging:
+    topic: ${VBANK_LOGGING_TOPIC:vbank.logs}
+    max-body-length: ${VBANK_LOGGING_MAX_BODY_LENGTH:10000}
+    kafka:
+      max-block-ms: ${VBANK_KAFKA_MAX_BLOCK_MS:1000}
+      request-timeout-ms: ${VBANK_KAFKA_REQUEST_TIMEOUT_MS:3000}
+      delivery-timeout-ms: ${VBANK_KAFKA_DELIVERY_TIMEOUT_MS:5000}
