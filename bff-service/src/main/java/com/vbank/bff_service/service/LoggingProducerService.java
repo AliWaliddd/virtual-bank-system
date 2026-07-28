@@ -1,6 +1,7 @@
-package com.vbank.user_service.service;
+package com.vbank.bff_service.service;
 
-import com.vbank.user_service.dto.LogMessage;
+
+import com.vbank.bff_service.dto.LogMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;

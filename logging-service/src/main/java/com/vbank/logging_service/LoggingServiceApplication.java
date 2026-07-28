@@ -11,7 +11,6 @@ public class LoggingServiceApplication {
 	public static void main(String[] args) {
 
 		SpringApplication.run(LoggingServiceApplication.class, args);
-		System.out.println("hello from logging service");
 	}
 
 }
