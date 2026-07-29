@@ -1,259 +1,177 @@
 # Virtual Bank System
 
-A one-month internship project that implements a simplified virtual banking platform using Spring Boot microservices, a Backend for Frontend (BFF), Apache Kafka, PostgreSQL, Docker Compose, and WSO2 API Manager.
+A simplified virtual banking platform built as a set of Java 21 and Spring Boot microservices. The project demonstrates domain-oriented service decomposition, a Backend for Frontend (BFF), WSO2 API Manager as the external gateway, PostgreSQL database ownership per service, synchronous REST communication, Kafka-based centralized logging, and scheduled account maintenance.
 
-## Project Overview
+> This README documents the implementation currently present in this repository. It also identifies the prototype limitations that should be discussed honestly during the project defense.
 
-The system is divided into independent Spring Boot services:
+## Team Contributions
 
-```text
-Client / Postman
-       |
-       v
-WSO2 API Gateway
-       |
-       +--------------------+
-       |                    |
-       v                    v
-  BFF Service        Direct API routing
-       |                    |
-       +---------+----------+
-                 |
-      +----------+-----------+
-      |          |           |
-      v          v           v
- User Service  Account    Transaction
-               Service      Service
+The project was developed collaboratively, with responsibilities divided across the main services and infrastructure components.
 
-All application services publish logs to Kafka
-                 |
-                 v
-          Logging Service
-                 |
-                 v
-          Logging Database
+### Aly Walid — Member 1
+
+Responsible for the implementation and integration of:
+
+- User Service
+- Account Service
+- BFF Service
+- WSO2 API Manager configuration and API Gateway integration
+
+### Eslam Fawzy — Member 2
+
+Responsible for the implementation and integration of:
+
+- Transaction Service
+- Logging Service
+- Apache Kafka integration
+- GitHub Actions continuous integration workflow
+
+Both team members collaborated on system integration, API testing, debugging, architectural decisions, docker compose environment, and final project documentation.
+
+---
+
+## Table of Contents
+
+- [Project Objectives](#project-objectives)
+- [System Architecture](#system-architecture)
+- [Architectural Patterns](#architectural-patterns)
+- [Services and Responsibilities](#services-and-responsibilities)
+- [Main System Flows](#main-system-flows)
+- [WSO2 API Gateway](#wso2-api-gateway)
+- [Backend API Reference](#backend-api-reference)
+- [Cross-Cutting Design](#cross-cutting-design)
+- [Technology Stack](#technology-stack)
+- [Repository Structure](#repository-structure)
+- [Running the Project](#running-the-project)
+- [Testing and CI](#testing-and-ci)
+- [Current Scope and Limitations](#current-scope-and-limitations)
+- [Project Defense](#project-defense)
+
+---
+
+## Project Objectives
+
+The project was designed to demonstrate how a banking-oriented application can be structured as a distributed system rather than as one large application. Its main objectives are to:
+
+- separate user, account, transaction, dashboard, and logging responsibilities;
+- expose external operations through a managed API gateway;
+- aggregate frontend-specific data through a BFF;
+- preserve service-level database ownership;
+- perform account transfers atomically inside the Account Service;
+- record transaction state independently from account balances;
+- publish operational logs asynchronously through Kafka;
+- propagate application identity and correlation information across service calls;
+- automate account inactivity processing with a scheduled job.
+
+The system is an educational prototype. It demonstrates architectural concepts and trade-offs rather than attempting to reproduce the complete regulatory, security, and operational requirements of a production bank.
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients[External Consumers]
+        Portal[Web Portal]
+        Mobile[Mobile Application]
+        Postman[Postman / Test Client]
+    end
+
+    Gateway[WSO2 API Manager\nGateway + Publisher + Developer Portal]
+
+    subgraph Application[Spring Boot Application Layer]
+        User[User Service\n:8081]
+        Account[Account Service\n:8082]
+        Transaction[Transaction Service\n:8083]
+        BFF[BFF Service\n:8084]
+        Logging[Logging Service\n:8085]
+    end
+
+    subgraph Data[PostgreSQL - Logical Database per Service]
+        UserDB[(vbank_users)]
+        AccountDB[(vbank_accounts)]
+        TransactionDB[(vbank_transactions)]
+        LogDB[(vbank_logs)]
+    end
+
+    Kafka[(Kafka topic: vbank.logs)]
+
+    Portal --> Gateway
+    Mobile --> Gateway
+    Postman --> Gateway
+
+    Gateway -->|Register / Login| User
+    Gateway -->|Dashboard| BFF
+    Gateway -->|Transfer initiation / execution| Transaction
+
+    BFF -->|Profile| User
+    BFF -->|User accounts| Account
+    BFF -->|Transactions per account| Transaction
+    Account -->|Verify user exists| User
+    Transaction -->|Account lookup and atomic transfer| Account
+
+    User --> UserDB
+    Account --> AccountDB
+    Transaction --> TransactionDB
+    Logging --> LogDB
+
+    User -. request / response logs .-> Kafka
+    Account -. request / response + scheduler logs .-> Kafka
+    Transaction -. request / response logs .-> Kafka
+    BFF -. dashboard outcome logs .-> Kafka
+    Kafka --> Logging
 ```
 
-Each microservice is an independent Maven/Spring Boot project with its own source code, configuration, tests, port, and—where required—database.
+### Boundary of Responsibility
+
+The intended external boundary is WSO2 API Manager. Clients should not depend directly on internal service URLs. Internally, services communicate through REST APIs and Kafka; they do not query another service's tables.
+
+A single PostgreSQL container hosts four logical databases for local development. This keeps deployment simple while preserving database ownership at the service level.
 
 ---
 
-## Repository Structure
+## Architectural Patterns
 
-```text
-virtual-bank-system/
-├── user-service/
-├── account-service/
-├── transaction-service/
-├── bff-service/
-├── logging-service/
-├── infrastructure/
-│   ├── docker-compose.yml
-│   ├── postgres/
-│   └── kafka/
-├── wso2/
-├── postman/
-├── docs/
-│   ├── api-contracts/
-│   ├── diagrams/
-│   └── architecture-decisions.md
-├── .env.example
-├── .gitignore
-└── README.md
+### 1. Microservices Architecture
+
+The banking domains are implemented as separate Spring Boot applications. Each service has its own controllers, business logic, configuration, persistence model, exception handling, Dockerfile, and Maven build.
+
+This separation provides:
+
+- clear ownership of business capabilities;
+- independent data models;
+- reduced coupling between domains;
+- the ability to change or scale a service independently;
+- explicit network contracts between services.
+
+The trade-off is increased distributed-system complexity: network failures, partial failures, data consistency, tracing, configuration, and deployment must all be considered.
+
+### 2. API Gateway Pattern
+
+WSO2 API Manager is the external entry point. It packages the public APIs, applies gateway security, routes requests, identifies the calling application, and can enforce throttling and monitoring policies.
+
+The gateway prevents clients from needing to know the internal topology. The current WSO2 exports also implement a custom policy that replaces any client-supplied `APP-NAME` header with a trusted value derived from the authenticated WSO2 application.
+
+### 3. Backend for Frontend Pattern
+
+The BFF exposes one dashboard operation optimized for the frontend:
+
+```http
+GET /bff/dashboard/{userId}
 ```
 
----
+Instead of forcing the frontend to call three services and combine their responses, the BFF:
 
-# Team Division
+1. requests the user profile;
+2. requests the user's accounts;
+3. retrieves transactions for every account concurrently;
+4. returns one frontend-oriented response.
 
-The work is divided by **service ownership**. Each member is responsible for the full implementation of the services assigned to them, including controllers, DTOs, entities, repositories, service logic, configuration, exception handling, tests, documentation, and integration.
+This reduces client chattiness and moves orchestration and response composition to the backend.
 
-## Member 1 — User, Account, and BFF
+### 4. Database-per-Service
 
-### User Service
-
-Responsible for:
-
-- `POST /users/register`
-- `POST /users/login`
-- `GET /users/{userId}/profile`
-- User entity and database schema
-- Unique username and email validation
-- Password hashing using BCrypt
-- Request validation
-- Authentication-related error handling
-- Preventing passwords from appearing in responses or logs
-- Kafka request/response logging
-- Unit and integration tests
-
-### Account Service
-
-Responsible for:
-
-- `POST /accounts`
-- `GET /accounts/{accountId}`
-- `GET /users/{userId}/accounts`
-- `PUT /accounts/transfer`
-- Account entity and database schema
-- Account number generation
-- Account types:
-    - `SAVINGS`
-    - `CHECKING`
-    - `SYSTEM`
-- Account statuses:
-    - `ACTIVE`
-    - `INACTIVE`
-- Positive balance and transfer amount validation
-- Sufficient-funds validation
-- Preventing transfers between the same account
-- Atomic debit and credit operations using `@Transactional`
-- Concurrency protection for account balances
-- Updating account activity timestamps
-- Kafka request/response logging
-- Unit and integration tests
-
-### Account Inactivity Scheduled Job
-
-Responsible for:
-
-- Running every hour
-- Finding accounts where:
-    - status is `ACTIVE`
-    - `lastActivityAt` is older than 24 hours
-- Changing their status to `INACTIVE`
-- Defining the behavior for newly created accounts
-- Testing the scheduled logic
-
-### BFF Service
-
-Responsible for:
-
-- `GET /bff/dashboard/{userId}`
-- Calling User Service for profile details
-- Calling Account Service for user accounts
-- Calling Transaction Service for each account's transactions
-- Using `WebClient`
-- Retrieving account transactions asynchronously
-- Combining responses into one dashboard response
-- Forwarding important headers:
-    - `Authorization`
-    - `APP-NAME`
-    - `X-Correlation-ID`
-- Handling downstream-service failures
-- Kafka request/response logging
-- Unit and integration tests using mocked services
-
----
-
-## Member 2 — Transactions, Kafka, Logging, and WSO2
-
-### Transaction Service
-
-Responsible for:
-
-- `POST /transactions/transfer/initiation`
-- `POST /transactions/transfer/execution`
-- `GET /accounts/{accountId}/transactions`
-- Transaction entity and database schema
-- Transaction statuses:
-    - `INITIATED`
-    - `SUCCESS`
-    - `FAILED`
-- Calling Account Service using `WebClient`
-- Creating transaction records before execution
-- Updating transaction status after execution
-- Saving failure reasons
-- Preventing duplicate transaction execution
-- Making execution idempotent
-- Returning sent and received transaction history
-- Kafka request/response logging
-- Unit and integration tests
-
-### Kafka Infrastructure
-
-Responsible for:
-
-- Adding Kafka to Docker Compose
-- Defining the Kafka topic
-- Configuring producers and consumers
-- Defining the shared log-message format
-- Documenting Kafka environment variables
-- Testing message production and consumption
-- Providing a standard producer pattern for all services
-
-Each member integrates the Kafka producer into the services they own.
-
-### Logging Service
-
-Responsible for:
-
-- Consuming request and response logs from Kafka
-- Parsing Kafka messages
-- Saving logs in its database
-- Handling malformed messages
-- Configuring consumer groups
-- Ensuring logs do not contain:
-    - passwords
-    - access tokens
-    - API keys
-    - authorization headers
-- Unit and integration tests
-
-### WSO2 API Manager
-
-Responsible for:
-
-- Creating the Register API
-- Creating the Login API
-- Creating the Dashboard API
-- Creating the Transactions API
-- Creating the `vbank` API product
-- Configuring backend routing
-- Configuring OAuth2
-- Configuring API-key security
-- Configuring throttling
-- Creating two applications:
-    - `vbank portal`
-    - `vbank mobile`
-- Injecting the `APP-NAME` header:
-    - `PORTAL`
-    - `MOBILE`
-- Exporting or documenting WSO2 configuration
-- Maintaining the final gateway-based Postman collection
-
----
-
-# Service Ports
-
-| Component | Port |
-|---|---:|
-| User Service | `8081` |
-| Account Service | `8082` |
-| Transaction Service | `8083` |
-| BFF Service | `8084` |
-| Logging Service | `8085` |
-| PostgreSQL | `5432` |
-| Kafka | `9092` |
-| WSO2 API Manager | To be confirmed from WSO2 configuration |
-
-Internal service URLs must be configured using environment variables rather than hardcoded in Java classes.
-
-Example:
-
-```env
-USER_SERVICE_URL=http://user-service:8081
-ACCOUNT_SERVICE_URL=http://account-service:8082
-TRANSACTION_SERVICE_URL=http://transaction-service:8083
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-```
-
-For local development outside Docker, the values may use `localhost`.
-
----
-
-# Database Ownership
-
-Recommended design:
+Each persistent service owns a logical PostgreSQL database:
 
 | Service | Database |
 |---|---|
@@ -263,624 +181,511 @@ Recommended design:
 | Logging Service | `vbank_logs` |
 | BFF Service | No database |
 
-One PostgreSQL server may host all four logical databases, but each service must access only its own database.
+The Transaction Service never updates account tables directly. It calls the Account Service, which remains the owner of balances and account status.
 
-Services must communicate through REST APIs or Kafka. A service must not query another service's tables directly.
+### 5. Event-Driven Logging
+
+HTTP request and response logs are published to the `vbank.logs` Kafka topic without making the business response wait for the Logging Service. The Logging Service consumes the messages and stores them in its own database.
+
+This is asynchronous communication: a temporary logging failure does not intentionally block the banking operation.
+
+### 6. Scheduled Processing
+
+The Account Service runs an hourly scheduled job. It marks eligible accounts as inactive when both their most recent transaction and most recent reactivation are older than the configured inactivity threshold. `SYSTEM` accounts are excluded.
 
 ---
 
-# Shared Technology Decisions
+## Services and Responsibilities
 
-Recommended baseline:
+| Component | Port | Main Responsibility | Persistence |
+|---|---:|---|---|
+| User Service | `8081` | Registration, credential validation, and user profiles | `vbank_users` |
+| Account Service | `8082` | Account creation, retrieval, activation, balances, atomic transfers, inactivity scheduler | `vbank_accounts` |
+| Transaction Service | `8083` | Transfer initiation, execution state, and transaction history | `vbank_transactions` |
+| BFF Service | `8084` | Dashboard aggregation and downstream orchestration | None |
+| Logging Service | `8085` | Kafka log consumption and persistence | `vbank_logs` |
+| PostgreSQL | `5432` | Hosts four logical databases | Docker volume |
+| Kafka | `9092` | Central asynchronous logging topic | Kafka storage |
+| WSO2 API Manager | `9443`, `8243`, `8280` | API management and gateway | Docker volumes |
 
-| Item | Decision |
+### User Service
+
+Implemented capabilities:
+
+- validates and normalizes usernames and email addresses;
+- enforces case-insensitive uniqueness in both application logic and database constraints;
+- hashes passwords using BCrypt;
+- returns a generic invalid-credentials response for both unknown users and incorrect passwords;
+- never returns the password hash;
+- supports profile retrieval by UUID;
+- validates `APP-NAME` and propagates `X-Correlation-ID`;
+- redacts sensitive fields before publishing logs.
+
+### Account Service
+
+Implemented capabilities:
+
+- verifies a user through the User Service before creating an account;
+- supports public `SAVINGS` and `CHECKING` accounts;
+- reserves the `SYSTEM` type for internal functionality;
+- generates unique 10-digit account numbers using `SecureRandom`;
+- stores monetary values as `BigDecimal` with two decimal places;
+- performs debit and credit inside one database transaction;
+- locks both accounts with `PESSIMISTIC_WRITE` in a stable UUID order to reduce race conditions and deadlock risk;
+- rejects self-transfers, non-positive amounts, inactive accounts, insufficient funds, and balance overflow;
+- updates `lastTransactionAt` for both accounts after a transfer;
+- supports explicit reactivation of non-system accounts;
+- runs the inactivity scheduler every hour by default.
+
+### Transaction Service
+
+Implemented capabilities:
+
+- validates that sender and receiver account IDs exist before creating a transaction;
+- creates a persisted `INITIATED` record before money movement;
+- calls the Account Service to perform the actual atomic balance transfer;
+- changes the transaction to `SUCCESS` after a successful account update;
+- changes it to `FAILED` for definitive business rejections;
+- keeps it `INITIATED` for temporary or ambiguous downstream failures so that a retry remains possible;
+- rejects execution of transactions that are no longer `INITIATED`;
+- returns transaction history where an account is either the sender or receiver, newest first.
+
+### BFF Service
+
+Implemented capabilities:
+
+- uses Spring WebFlux and `WebClient`;
+- requests profile and account data concurrently using `Mono.zip`;
+- retrieves transactions for multiple accounts with configurable concurrency;
+- preserves account ordering with `flatMapSequential`;
+- forwards `APP-NAME` and `X-Correlation-ID` to downstream services;
+- validates downstream response structure and identifiers;
+- maps downstream errors into frontend-facing `404`, `502`, `503`, and `504` responses;
+- converts “no accounts” and “no transactions” responses to empty lists where appropriate.
+
+### Logging Service
+
+Implemented capabilities:
+
+- consumes `LogMessage` objects from `vbank.logs`;
+- uses a dedicated Kafka consumer group;
+- stores message body, message type, service name, HTTP metadata, correlation ID, and application name;
+- uses Kafka error-handling deserializers for consumer input.
+
+---
+
+## Main System Flows
+
+### Dashboard Aggregation Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant WSO2 as WSO2 API Gateway
+    participant BFF as BFF Service
+    participant User as User Service
+    participant Account as Account Service
+    participant Tx as Transaction Service
+
+    Client->>WSO2: GET /dashboard/{userId}
+    WSO2->>WSO2: Authenticate request and resolve application
+    WSO2->>BFF: GET /bff/dashboard/{userId}\nAPP-NAME + correlation ID
+
+    par Profile and accounts
+        BFF->>User: GET /users/{userId}/profile
+        User-->>BFF: User profile
+    and
+        BFF->>Account: GET /users/{userId}/accounts
+        Account-->>BFF: Account list
+    end
+
+    loop For each account, with bounded concurrency
+        BFF->>Tx: GET /accounts/{accountId}/transactions
+        Tx->>Account: GET /accounts/{accountId}
+        Account-->>Tx: Account exists
+        Tx-->>BFF: Transaction history
+    end
+
+    BFF-->>WSO2: Aggregated dashboard JSON
+    WSO2-->>Client: Dashboard response
+```
+
+### Transfer Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> INITIATED: POST /initiation
+    INITIATED --> SUCCESS: Account Service transfer succeeds
+    INITIATED --> FAILED: Definitive business rejection
+    INITIATED --> INITIATED: Temporary / ambiguous downstream failure
+    SUCCESS --> SUCCESS: Further execution rejected with 409
+    FAILED --> FAILED: Further execution rejected with 409
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant WSO2 as WSO2 API Gateway
+    participant Tx as Transaction Service
+    participant Account as Account Service
+    participant TxDB as Transaction DB
+    participant AccountDB as Account DB
+
+    Client->>WSO2: POST /initiation
+    WSO2->>Tx: Transfer details + trusted APP-NAME
+    Tx->>Account: Validate source account
+    Account-->>Tx: Account data
+    Tx->>Account: Validate destination account
+    Account-->>Tx: Account data
+    Tx->>TxDB: Save INITIATED transaction
+    Tx-->>Client: 201 + transactionId
+
+    Client->>WSO2: POST /execution {transactionId}
+    WSO2->>Tx: Execute transaction
+    Tx->>TxDB: Read INITIATED record
+    Tx->>Account: PUT /accounts/transfer
+    Account->>AccountDB: Lock accounts in stable order
+    Account->>AccountDB: Debit + credit atomically
+    Account-->>Tx: Transfer accepted
+    Tx->>TxDB: Update status to SUCCESS
+    Tx-->>Client: 200 + transaction result
+```
+
+### Centralized Logging Flow
+
+```mermaid
+sequenceDiagram
+    participant Service as Application Service
+    participant Kafka as Kafka: vbank.logs
+    participant Logger as Logging Service
+    participant DB as vbank_logs
+
+    Service->>Service: Redact sensitive JSON fields
+    Service-->>Kafka: Publish LogMessage asynchronously
+    Kafka-->>Logger: Deliver message to consumer group
+    Logger->>DB: Persist log entry
+```
+
+---
+
+## WSO2 API Gateway
+
+The repository contains exported WSO2 API artifacts under `wso2/exports/` and a reusable policy under `wso2/policies/`.
+
+### Exported APIs
+
+| WSO2 API | API Context | Public Resource | Backend Endpoint |
+|---|---|---|---|
+| VBank Register API | `/register-api` | `POST /register` | `http://user-service:8081/users/register` |
+| VBank Login API | `/login-api` | `POST /login` | `http://user-service:8081/users/login` |
+| VBank Dashboard API | `/dashboard-api` | `GET /dashboard/{userId}` | `http://bff-service:8084/bff/dashboard/{userId}` |
+| VBank Transactions API | `/transactions-api` | `POST /initiation` | `http://transaction-service:8083/transactions/transfer/initiation` |
+| VBank Transactions API | `/transactions-api` | `POST /execution` | `http://transaction-service:8083/transactions/transfer/execution` |
+
+### API Product
+
+The four APIs are packaged in the published `vbank` API product:
+
+- name: `vbank`;
+- version: `1.0.0`;
+- context: `/vbank`;
+- public operations: `/register`, `/login`, `/dashboard/{userId}`, `/initiation`, and `/execution`.
+
+The product is the preferred public contract because the custom application-identity policy is attached to its operations.
+
+### Security and Application Identity
+
+The exports advertise WSO2 OAuth2 and API-key security mechanisms. Operations use the WSO2 `Application & Application User` authorization type.
+
+Two WSO2 applications must exist with these exact names:
+
+| WSO2 Application | Injected Header |
 |---|---|
-| Java | Java 11 |
-| Spring Boot | Java-11-compatible Spring Boot version |
-| Build tool | Maven |
-| Database | PostgreSQL |
-| Internal HTTP client | Spring `WebClient` |
-| Messaging | Apache Kafka |
-| Containers | Docker Compose |
-| API Gateway | WSO2 API Manager |
-| API testing | Postman |
-| Unit testing | JUnit and Mockito |
+| `vbank portal` | `APP-NAME: PORTAL` |
+| `vbank mobile` | `APP-NAME: MOBILE` |
 
-Both members must use the same Java and Maven versions.
+The custom `InjectVBankAppName` policy:
 
----
+1. removes any `APP-NAME` supplied directly by the client;
+2. reads the authenticated WSO2 application name;
+3. injects `PORTAL` or `MOBILE` into the backend request;
+4. rejects unsupported applications with `403 Forbidden`.
 
-# Decisions That Must Be Confirmed Together
+This prevents a client from impersonating a different application merely by changing a header.
 
-The following decisions must be discussed and recorded before implementation. Final decisions should also be copied into `docs/architecture-decisions.md`.
+### Throttling Status
 
-## 1. Mandatory Project Scope
+WSO2 supports throttling, but the current exported APIs and product use the `Unlimited` policy. A bounded subscription or operation-level policy should be configured before describing the system as actively rate-limited.
 
-Confirm whether the daily interest feature is required for a two-member team.
+### WSO2 Import Notes
 
-Current proposed scope:
-
-### Mandatory
-
-- User Service
-- Account Service
-- Transaction Service
-- BFF Service
-- Logging Service
-- Kafka
-- WSO2 API Manager
-- Account inactivity scheduler
-
-### Pending Supervisor Confirmation
-
-- Daily savings-interest scheduler
-- Persisted `SYSTEM` account
-- Automatic interest payouts
-
-Decision:
-
-```text
-[ ] Daily interest is required
-[ ] Daily interest is not required
-[ ] Waiting for supervisor confirmation
-```
+See [`wso2/README.md`](wso2/README.md) for the artifact inventory and recommended import sequence.
 
 ---
 
-## 2. WSO2 Routing
+## Backend API Reference
 
-Recommended routing:
+These are internal backend routes. External clients should normally use the WSO2 API product.
 
-| Public Route | Backend |
-|---|---|
-| `/register` | User Service `/users/register` |
-| `/login` | User Service `/users/login` |
-| `/dashboard/{userId}` | BFF `/bff/dashboard/{userId}` |
-| `/initiation` | Transaction Service `/transactions/transfer/initiation` |
-| `/execution` | Transaction Service `/transactions/transfer/execution` |
+### User Service
 
-Decision:
+| Method | Path | Success | Description |
+|---|---|---:|---|
+| `POST` | `/users/register` | `201` | Register a new user |
+| `POST` | `/users/login` | `200` | Validate username and password |
+| `GET` | `/users/{userId}/profile` | `200` | Retrieve user profile |
 
-```text
-[ ] Use the routing above
-[ ] Route every external request through the BFF
-[ ] Other: ______________________________
-```
+### Account Service
 
----
+| Method | Path | Success | Description |
+|---|---|---:|---|
+| `POST` | `/accounts` | `201` | Create a savings or checking account |
+| `GET` | `/accounts/{accountId}` | `200` | Retrieve account details |
+| `GET` | `/users/{userId}/accounts` | `200` | Retrieve all accounts belonging to a user |
+| `PUT` | `/accounts/transfer` | `200` | Atomically transfer money between accounts |
+| `PUT` | `/accounts/{accountId}/activate` | `200` | Reactivate an inactive non-system account |
 
-## 3. Authentication Responsibility
+### Transaction Service
 
-The project requires WSO2 OAuth2 and API-key security, but it does not clearly state whether User Service must generate JWTs.
+| Method | Path | Success | Description |
+|---|---|---:|---|
+| `POST` | `/transactions/transfer/initiation` | `201` | Create an `INITIATED` transfer record |
+| `POST` | `/transactions/transfer/execution` | `200` | Execute a previously initiated transfer |
+| `GET` | `/accounts/{accountId}/transactions` | `200` | Return sent and received transactions |
 
-Confirm:
+### BFF Service
 
-```text
-[ ] WSO2 manages external access tokens; User Service only validates credentials
-[ ] User Service also generates a JWT
-[ ] OAuth2 and API key are both required for every request
-[ ] Clients may use either OAuth2 or API key
-[ ] Waiting for supervisor confirmation
-```
+| Method | Path | Success | Description |
+|---|---|---:|---|
+| `GET` | `/bff/dashboard/{userId}` | `200` | Aggregate profile, accounts, and account transactions |
 
----
+### Required Internal Headers
 
-## 4. Account Transfer Design
-
-Recommended decision:
-
-- Transaction Service calls one Account Service endpoint.
-- Account Service performs debit and credit atomically.
-- Separate debit and credit API calls will not be used.
-
-Endpoint:
+The servlet-based business services validate:
 
 ```http
-PUT /accounts/transfer
+APP-NAME: PORTAL | MOBILE
+X-Correlation-ID: <UUID>
 ```
 
-Request:
+`X-Correlation-ID` is generated when missing or invalid. `APP-NAME` is expected to be injected by WSO2 in the intended request path.
+
+---
+
+## Cross-Cutting Design
+
+### Validation and Error Responses
+
+The services use Jakarta Bean Validation and centralized exception handlers. Errors follow a consistent structure similar to:
 
 ```json
 {
-  "fromAccountId": "uuid",
-  "toAccountId": "uuid",
-  "amount": 100.00
+  "timestamp": "2026-07-29T12:00:00Z",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Amount must be greater than zero.",
+  "path": "/accounts/transfer"
 }
 ```
 
-Decision:
+The BFF extends its error response with correlation and downstream-service information.
 
-```text
-[ ] Use one atomic transfer endpoint
-[ ] Use separate debit and credit endpoints
-```
+### Correlation IDs
 
----
+`X-Correlation-ID` connects logs and downstream calls belonging to the same request. The services return it in the response and include it in Kafka log messages.
 
-## 5. Transaction Execution and Idempotency
+### Sensitive-Data Redaction
 
-Recommended behavior:
+Before request or response bodies are published to Kafka, the logging filters recursively redact fields such as:
 
-1. Initiation creates an `INITIATED` transaction.
-2. Execution calls Account Service.
-3. Success changes status to `SUCCESS`.
-4. Failure changes status to `FAILED`.
-5. A `SUCCESS` transaction cannot be executed again.
-6. Repeated execution returns `409 Conflict`.
+- passwords and password hashes;
+- authorization values;
+- access and refresh tokens;
+- API keys and secrets.
 
-Decision:
+Unparseable or non-JSON bodies are omitted rather than logged verbatim.
 
-```text
-[ ] Reject repeated execution with 409
-[ ] Allow controlled retries for FAILED transactions
-[ ] Other: ______________________________
-```
+### Money and Concurrency
 
----
+- Monetary values use `BigDecimal`, never floating-point types.
+- Account balances use a fixed database precision and scale.
+- The Account Service performs the debit and credit within one local transaction.
+- Pessimistic row locks protect concurrent updates to the same accounts.
+- Locks are acquired in a deterministic UUID order to reduce deadlock risk.
 
-## 6. Account Activity Rule
+### Failure Handling Between Services
 
-Recommended design:
-
-- Add `lastActivityAt` to the Account entity.
-- Set it to account creation time when the account is created.
-- Update it when an account sends or receives money.
-- Run the inactivity job every hour.
-- Mark accounts inactive after 24 hours without activity.
-
-Confirm whether inactive accounts may receive money:
-
-```text
-[ ] Inactive accounts cannot send or receive
-[ ] Inactive accounts may receive but cannot send
-[ ] Other: ______________________________
-```
+- definitive business failures during execution mark a transaction `FAILED`;
+- service unavailability, gateway-like responses, or temporary conflicts leave it `INITIATED`;
+- BFF requests fail fast when a required downstream service fails;
+- Kafka publishing failures are logged locally and do not intentionally fail the banking response.
 
 ---
 
-## 7. Dashboard Transaction Limit
+## Technology Stack
 
-The project says "recent transactions" but does not define how many.
-
-Decision:
-
-```text
-[ ] Return the latest 10 transactions per account
-[ ] Return all transactions
-[ ] Use pagination
-[ ] Other limit: __________
-```
-
-Recommended initial choice: latest 10 transactions per account.
-
----
-
-## 8. Dashboard Failure Behavior
-
-Recommended behavior:
-
-- Missing user returns `404`.
-- User or Account Service failure causes the dashboard request to fail.
-- Transaction Service failure causes the dashboard request to return `502 Bad Gateway`.
-
-Decision:
-
-```text
-[ ] Fail the complete dashboard when a downstream service fails
-[ ] Return partial data with warnings
-```
-
----
-
-## 9. Transaction History Format
-
-Recommended rules:
-
-- Store all transfer amounts as positive `BigDecimal` values.
-- Use `fromAccountId` and `toAccountId` to determine direction.
-- Use only the `status` field.
-- Do not use inconsistent fields such as `deliveryStatus`.
-- Return transactions where the account is either sender or receiver.
-
-Decision:
-
-```text
-[ ] Use this transaction-history format
-[ ] Other: ______________________________
-```
-
----
-
-## 10. Kafka Topic and Log Format
-
-Recommended topic:
-
-```text
-vbank.logs
-```
-
-Minimum required message:
-
-```json
-{
-  "message": "{}",
-  "messageType": "REQUEST",
-  "dateTime": "2026-07-16T12:30:00Z"
-}
-```
-
-Recommended extended message:
-
-```json
-{
-  "message": "{}",
-  "messageType": "REQUEST",
-  "dateTime": "2026-07-16T12:30:00Z",
-  "serviceName": "account-service",
-  "httpMethod": "PUT",
-  "path": "/accounts/transfer",
-  "statusCode": null,
-  "correlationId": "uuid",
-  "appName": "PORTAL"
-}
-```
-
-Decision:
-
-```text
-[ ] Use only the minimum fields
-[ ] Use the extended fields
-[ ] Other: ______________________________
-```
-
----
-
-## 11. Correlation ID
-
-Recommended header:
-
-```http
-X-Correlation-ID
-```
-
-Proposed behavior:
-
-- WSO2 or BFF creates one when it is missing.
-- Services forward it to downstream services.
-- Kafka logs include it.
-- Error responses include it.
-
-Decision:
-
-```text
-[ ] Use X-Correlation-ID
-[ ] Do not use a correlation ID
-[ ] Other header: ________________________
-```
-
----
-
-## 12. `APP-NAME` Behavior
-
-Allowed values:
-
-```text
-PORTAL
-MOBILE
-```
-
-Recommended rules:
-
-- WSO2 determines the calling application.
-- WSO2 replaces any client-provided `APP-NAME`.
-- BFF forwards it to downstream services.
-- Backend services include it in logs.
-- Backends do not trust arbitrary client-supplied values.
-
-Decision for invalid or missing values:
-
-```text
-[ ] Return 400 Bad Request
-[ ] Return 403 Forbidden
-[ ] Allow missing APP-NAME for internal calls
-[ ] Other: ______________________________
-```
-
----
-
-## 13. Common Error Response
-
-Recommended format:
-
-```json
-{
-  "timestamp": "2026-07-16T12:45:00Z",
-  "status": 404,
-  "error": "Not Found",
-  "message": "Account not found.",
-  "path": "/accounts/123",
-  "correlationId": "uuid"
-}
-```
-
-Recommended status codes:
-
-| Status | Meaning |
-|---:|---|
-| `400` | Invalid input or business-rule violation |
-| `401` | Unauthenticated |
-| `403` | Authenticated but unauthorized |
-| `404` | Resource not found |
-| `409` | Duplicate or conflicting operation |
-| `500` | Unexpected internal error |
-| `502` | Downstream service failure |
-| `503` | Service unavailable |
-
-Decision:
-
-```text
-[ ] Use this error format in every service
-[ ] Other: ______________________________
-```
-
----
-
-## 14. Shared Data Types
-
-Recommended:
-
-```text
-userId        UUID
-accountId     UUID
-transactionId UUID
-accountNumber String
-money         BigDecimal
-timestamps    Instant or OffsetDateTime
-```
-
-Decision:
-
-```text
-[ ] Use Instant
-[ ] Use OffsetDateTime
-```
-
-Never use `double` or `float` for money.
-
----
-
-## 15. API Contracts
-
-Before implementation, create:
-
-```text
-docs/api-contracts/
-├── user-service.md
-├── account-service.md
-├── transaction-service.md
-├── bff-service.md
-└── logging-message.md
-```
-
-Every endpoint contract must define:
-
-- HTTP method
-- path
-- required headers
-- request fields
-- response fields
-- validation rules
-- success status
-- possible error statuses
-- example JSON
-
-Decision:
-
-```text
-[ ] Contracts will be written before implementation
-[ ] Contracts will be generated using OpenAPI
-[ ] Both Markdown and OpenAPI will be used
-```
-
----
-
-# Git and GitHub Workflow
-
-## Main Rule
-
-Do not push unfinished work directly to `main`.
-
-Use one branch per feature or fix.
-
-Examples:
-
-```text
-feature/user-registration
-feature/account-creation
-feature/account-transfer
-feature/transaction-initiation
-feature/transaction-execution
-feature/bff-dashboard
-feature/kafka-logging
-feature/wso2-configuration
-fix/duplicate-transaction-execution
-```
-
-## Starting a Task
-
-```bash
-git checkout main
-git pull origin main
-git checkout -b feature/task-name
-```
-
-## Saving and Pushing Work
-
-```bash
-git add .
-git commit -m "Implement user registration endpoint"
-git push -u origin feature/task-name
-```
-
-Then open a pull request from the feature branch into `main`.
-
-## After a Pull Request Is Merged
-
-```bash
-git checkout main
-git pull origin main
-git branch -d feature/task-name
-```
-
-## Pull Request Review Checklist
-
-Before merging, the other member should verify:
-
-- The code follows the agreed API contract.
-- Validation is present.
-- Errors use the common response format.
-- Sensitive data is not logged.
-- Tests are included.
-- No secrets are committed.
-- Existing services still build.
-- Shared configuration changes are explained.
-
----
-
-# Shared-File Ownership
-
-To reduce merge conflicts:
-
-| Shared File or Folder | Primary Owner |
+| Area | Technology |
 |---|---|
-| `README.md` | Member 1 |
-| `docs/architecture-decisions.md` | Member 1 |
-| `infrastructure/docker-compose.yml` | Member 2 |
-| Kafka configuration | Member 2 |
-| `postman/` | Member 2 |
-| `wso2/` | Member 2 |
-
-The other member may propose changes through pull requests.
-
----
-
-# Environment and Secrets
-
-Never commit:
-
-- `.env`
-- database passwords
-- OAuth client secrets
-- API keys
-- access tokens
-- private certificates
-- WSO2 secrets
-- local application configuration containing credentials
-
-Commit `.env.example` instead.
-
-Example:
-
-```env
-POSTGRES_USER=vbank
-POSTGRES_PASSWORD=replace_me
-
-USER_SERVICE_URL=http://localhost:8081
-ACCOUNT_SERVICE_URL=http://localhost:8082
-TRANSACTION_SERVICE_URL=http://localhost:8083
-
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-```
-
-Recommended `.gitignore` entries:
-
-```gitignore
-target/
-.idea/
-*.iml
-.vscode/
-.DS_Store
-.env
-application-local.properties
-application-local.yml
-logs/
-```
+| Language | Java 21 |
+| Framework | Spring Boot 3.5.6 |
+| MVC services | Spring Web |
+| Reactive BFF | Spring WebFlux and Reactor |
+| Persistence | Spring Data JPA and Hibernate |
+| Database | PostgreSQL 16 |
+| Messaging | Apache Kafka 4.0.0 |
+| API management | WSO2 API Manager 4.7.0 |
+| Validation | Jakarta Bean Validation |
+| Security utility | Spring Security and BCrypt |
+| Build | Maven Wrapper |
+| Containers | Docker and Docker Compose |
+| CI | GitHub Actions |
+| API testing | Postman / WSO2 gateway clients |
 
 ---
 
-# Initial Implementation Order
-
-## Shared Foundation
-
-Complete together:
-
-1. Confirm the decisions in this README.
-2. Copy final choices into `docs/architecture-decisions.md`.
-3. Confirm Java and Spring Boot versions.
-4. Create the five Spring Boot Maven projects.
-5. Configure service ports.
-6. Create PostgreSQL databases.
-7. Add Kafka and PostgreSQL to Docker Compose.
-8. Define API contracts.
-9. Define the common error response.
-10. Define environment variables.
-
-## Member 1 Starts With
-
-1. User registration
-2. User login
-3. User profile
-4. Account creation
-5. Account retrieval
-6. Atomic account transfer
-7. Account inactivity job
-8. BFF dashboard
-
-## Member 2 Starts With
-
-1. Transaction entity and initiation
-2. Transaction history
-3. Transaction execution
-4. Kafka infrastructure
-5. Logging consumer
-6. WSO2 routing and security
-7. Gateway Postman collection
-
----
-
-# Definition of Done
-
-A feature is considered complete when:
-
-- The endpoint or process works.
-- Validation is implemented.
-- Errors follow the shared format.
-- Unit tests pass.
-- Integration tests pass where applicable.
-- Sensitive data is not logged.
-- Configuration uses environment variables.
-- Documentation is updated.
-- The feature is reviewed through a pull request.
-- The branch is merged into `main`.
-
----
-
-# Current Project Status
+## Repository Structure
 
 ```text
-[ ] Architecture decisions finalized
-[ ] API contracts finalized
-[ ] Java/Spring Boot versions finalized
-[ ] User Service created
-[ ] Account Service created
-[ ] Transaction Service created
-[ ] BFF Service created
-[ ] Logging Service created
-[ ] PostgreSQL configured
-[ ] Kafka configured
-[ ] Docker Compose configured
-[ ] WSO2 configured
-[ ] Postman collection created
-[ ] End-to-end flow tested
+virtual-bank-system/
+├── .github/workflows/ci-cd.yml
+├── user-service/
+├── account-service/
+├── transaction-service/
+├── bff-service/
+├── logging-service/
+├── infrastructure/
+│   ├── docker-compose.yml
+│   └── postgres
+│       └── init.databases.sql
+├── wso2/
+│   ├── exports/
+│   ├── policies/
+│   └── README.md
+├── docs/
+│   ├── account-service.md
+│   └── user-service.md  
+├── postman/
+└── README.md
 ```
+
+Each service is a separate Maven project rather than a parent multi-module build.
+
+---
+
+## Running the Project
+
+### Prerequisites
+
+- Java 21;
+- Docker with Docker Compose;
+- Git;
+- sufficient memory for PostgreSQL, Kafka, WSO2 API Manager, and five Spring Boot services.
+
+### 1. Build the Service JARs
+
+The current Dockerfiles copy an already-built JAR from each service's `target/` directory. Build the services before starting Compose:
+
+```bash
+for service in user-service account-service transaction-service bff-service logging-service; do
+  (cd "$service" && chmod +x mvnw && ./mvnw clean package -DskipTests)
+done
+```
+
+### 2. Start the Infrastructure and Services
+
+```bash
+docker compose -f infrastructure/docker-compose.yml up --build -d
+```
+
+Check status and logs:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml ps
+docker compose -f infrastructure/docker-compose.yml logs -f
+```
+
+Stop the environment:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml down
+```
+
+To remove persisted local PostgreSQL and WSO2 data as well:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml down -v
+```
+
+
+```
+
+### Development Credentials
+
+The Compose file currently contains development-only PostgreSQL credentials:
+
+```text
+username: vbank
+password: vbank_password
+```
+
+They must be externalized and replaced for any non-local environment.
+
+---
+
+## Testing and CI
+
+### Current Automated Tests
+
+The repository currently contains Spring context-loading tests. User and Account Service tests use H2 in PostgreSQL compatibility mode. The test suite does not yet provide comprehensive unit, integration, concurrency, gateway, or end-to-end coverage.
+
+### GitHub Actions
+
+The CI workflow currently:
+
+1. checks out the repository;
+2. configures Java 21;
+3. packages all five services with tests skipped;
+4. starts Docker Compose;
+5. waits for startup;
+6. prints logs and lists running containers;
+7. shuts the environment down.
+
+This verifies packaging and basic container startup, but it is not yet a functional end-to-end test pipeline.
+
+---
+
+## Current Scope and Limitations
+
+The following points are important to state clearly during the defense:
+
+1. **The daily savings-interest scheduler is not implemented.** The `SYSTEM` account type is reserved, but there is no midnight interest process in the current code.
+2. **Authentication is enforced primarily at the WSO2 boundary.** Backend services do not independently validate an OAuth access token; direct access to exposed development ports can bypass the gateway.
+3. **The current WSO2 throttling policy is `Unlimited`.** The gateway is capable of throttling, but a bounded policy has not been configured in the exports.
+4. **WSO2 applications are runtime configuration.** API and API-product exports are included, but the `vbank portal` and `vbank mobile` applications must be created in WSO2.
+5. **Transaction re-execution protection is status-based.** It rejects ordinary repeated execution, but concurrent duplicate execution would require stronger transaction-row locking, optimistic versioning, or an idempotency-key design.
+6. **Distributed money transfer is not a single cross-service transaction.** Account balance movement is atomic inside Account Service, while transaction status is stored separately. Temporary ambiguous failures are deliberately left `INITIATED`, but a production system would require reconciliation and stronger delivery guarantees.
+7. **Automated testing is still limited.** Most current tests only verify Spring context startup, and CI skips test execution.
+8. **Observability is foundational rather than complete.** Kafka logging and correlation IDs are implemented, but metrics, tracing, dashboards, retention, dead-letter handling, and alerting are outside the current scope.
+9. **Configuration contains local-development defaults.** Credentials and some hostnames should be externalized more consistently for production deployment.
+
+These limitations do not invalidate the architecture. They define the boundary between the implemented internship prototype and a production-grade banking platform.
+
+---
+
+## Project Defense
+
+Use a short slide deck as the main presentation and keep this README open as supporting evidence. Do not present the project by scrolling through source files or reading the README line by line.
+
+A strong defense should focus on:
+
+- the problem and architectural objective;
+- why each pattern was selected;
+- the boundaries and responsibilities of every service;
+- the transfer consistency model;
+- the BFF aggregation flow;
+- how WSO2 establishes the external security boundary and trusted application identity;
+- how Kafka decouples logging from business operations;
+- design trade-offs, failure handling, limitations, and future work.
+
